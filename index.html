@@ -76,7 +76,26 @@
 
     <!-- Danh sách game có sẵn từ Supabase -->
     <section class="library-section">
-      <h2 class="section-title">Thư viện Game sẵn có</h2>
+      <div class="library-toolbar">
+        <h2 class="section-title">Thư viện Game</h2>
+        
+        <div class="filter-controls">
+          <!-- Ô tìm kiếm tên game -->
+          <div class="search-wrapper">
+            <input type="text" id="search-input" placeholder="🔍 Tìm tên game...">
+          </div>
+
+          <!-- Nút lọc hệ máy -->
+          <div class="system-filter-group" id="system-filters">
+            <button class="filter-pill active" data-system="ALL">Tất cả</button>
+            <button class="filter-pill" data-system="GBA">GBA</button>
+            <button class="filter-pill" data-system="PSX">PS1</button>
+            <button class="filter-pill" data-system="NES">NES</button>
+            <button class="filter-pill" data-system="SNES">SNES</button>
+          </div>
+        </div>
+      </div>
+
       <div class="game-grid" id="game-grid">
         <p class="loading-state">Đang kết nối thư viện game...</p>
       </div>
@@ -107,23 +126,49 @@
     </div>
   </div>
 
-  <!-- MODAL CẬP NHẬT NICKNAME -->
-  <div id="profile-modal" class="modal-overlay" style="display:none;">
-    <div class="modal-box">
-      <h3>Thiết lập Hồ Sơ</h3>
-      <p class="modal-sub">Chọn tên hiển thị khi chơi online và lưu game:</p>
-      
+  <!-- MODAL QUẢN LÝ TÀI KHOẢN & DỮ LIỆU -->
+<div id="account-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-box account-modal-box">
+    <div class="modal-header">
+      <h3>Trung Tâm Game Thủ</h3>
+      <button class="btn-close" onclick="closeAccountModal()">✕</button>
+    </div>
+
+    <!-- Thanh chuyển Tab -->
+    <div class="tab-nav">
+      <button class="tab-btn active" onclick="switchAccountTab('profile')">👤 Hồ sơ</button>
+      <button class="tab-btn" onclick="switchAccountTab('roms')">💾 ROM trong máy</button>
+      <button class="tab-btn" onclick="switchAccountTab('saves')">☁️ Save Đám mây</button>
+    </div>
+
+    <!-- TAB 1: THIẾT LẬP HỒ SƠ -->
+    <div id="tab-profile" class="tab-content active">
       <div class="input-group">
-        <label for="input-username">Nickname mới:</label>
+        <label for="input-username">Nickname hiển thị:</label>
         <input type="text" id="input-username" maxlength="20" placeholder="VD: DragonKnight...">
       </div>
+      <div class="modal-actions-row" style="margin-top: 1rem;">
+        <button class="btn btn-primary" onclick="saveUsername()">Lưu Nickname</button>
+      </div>
+    </div>
 
-      <div class="modal-actions-row">
-        <button class="btn btn-secondary" onclick="closeProfileModal()">Hủy</button>
-        <button class="btn btn-primary" onclick="saveUsername()">Lưu thay đổi</button>
+    <!-- TAB 2: QUẢN LÝ BỘ NHỚ LOCAL (INDEXEDDB) -->
+    <div id="tab-roms" class="tab-content">
+      <p class="tab-desc">Các file game đã được lưu vào bộ nhớ trình duyệt để chơi ngay không tốn mạng:</p>
+      <div id="local-roms-list" class="storage-list">
+        <p class="empty-state">Đang quét bộ nhớ...</p>
+      </div>
+    </div>
+
+    <!-- TAB 3: QUẢN LÝ CLOUD SAVE (SUPABASE) -->
+    <div id="tab-saves" class="tab-content">
+      <p class="tab-desc">Các bản lưu tiến trình (Slot 1 - 3) đang lưu trữ trên Cloud Storage:</p>
+      <div id="cloud-saves-list" class="storage-list">
+        <p class="empty-state">Đang nạp danh sách file save...</p>
       </div>
     </div>
   </div>
+</div>
 
   <script src="app.js"></script>
 </body>
