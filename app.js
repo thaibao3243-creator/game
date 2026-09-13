@@ -2,7 +2,7 @@
 // Thay thông tin từ Supabase Dashboard -> Project Settings -> API
 const SUPABASE_URL = "https://kmypjbgjvkkbmyaomhrt.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtteXBqYmdqdmtrYm15YW9taHJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyOTQxMjgsImV4cCI6MjEwNDg3MDEyOH0.LehadH5EP9rtre0Ielz4U3kuQ8wE6rZMw_yjg6iS_kw";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ================= EMULATORJS CONTROLLER =================
 function startEmulator(core, romSource, gameTitle = "Retro Game") {
@@ -30,7 +30,7 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
 // ================= LẤY GAME TỪ SUPABASE =================
 async function loadGamesFromSupabase() {
   const grid = document.getElementById("game-grid");
-  const { data: games, error } = await supabase.from("games").select("*");
+  const { data: games, error } = await supabaseClient.from("games").select("*");
 
   if (error) {
     grid.innerHTML = `<p style="color:red">Không thể tải dữ liệu: ${error.message}</p>`;
