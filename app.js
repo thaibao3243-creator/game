@@ -23,19 +23,32 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   const placeholder = document.getElementById("game-placeholder");
   if (placeholder) placeholder.style.display = "none";
 
-  // Dọn dẹp canvas cũ
   container.innerHTML = '<div id="game"></div>';
 
   window.EJS_player = "#game";
-  window.EJS_core = core; // 'gba', 'nes', 'snes', 'psx'
+  window.EJS_core = core;
   window.EJS_gameName = gameTitle;
   window.EJS_gameUrl = romSource;
   window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/";
   window.EJS_startOnLoaded = true;
 
-  // Tự động load save mới nhất nếu người chơi có
-  window.EJS_onLoadSave = () => {
-    console.log("Trình giả lập đã tải xong, sẵn sàng nạp save state.");
+  // ================= VÔ HIỆU HÓA CÁC NÚT SAVE / LOAD MẶC ĐỊNH =================
+  const noSaveButtons = {
+    playPause: true,
+    restart: true,
+    mute: true,
+    volume: true,
+    settings: true,
+    fullscreen: true,
+    gamepad: true,
+    // Tắt toàn bộ tính năng lưu/nạp mặc định
+    saveState: false,
+    loadState: false,
+    quickSave: false,
+    quickLoad: false,
+    saveSavFiles: false,
+    loadSavFiles: false,
+    cacheManager: false
   };
 
   const oldScript = document.getElementById("ejs-loader");
@@ -45,53 +58,9 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   script.id = "ejs-loader";
   script.src = "https://cdn.emulatorjs.org/stable/data/loader.js";
   document.body.appendChild(script);
-
+  window.EJS_buttons = noSaveButtons;
+  window.EJS_defaultButtons = noSaveButtons;
   updateSaveSlotUI();
-}
-
-// Hàm nạp game thông minh: Tự kiểm tra cache IndexedDB trước khi tải từ mạng
-async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
-  currentGame = { id: gameId, title: gameTitle, core: core, isLocal: false };
-  const container = document.getElementById("game-container");
-  const placeholder = document.getElementById("game-placeholder");
-  if (placeholder) placeholder.style.display = "none";
-
-  try {
-    let romBlob = null;
-
-    // Kiểm tra xem trình duyệt đã nạp thư viện idbKeyval chưa
-    if (window.idbKeyval) {
-      romBlob = await window.idbKeyval.get(`rom_${gameId}`);
-    }
-
-    if (romBlob) {
-      console.log("⚡ Tìm thấy ROM trong IndexedDB, nạp ngay không cần tải lại!");
-    } else {
-      console.log("🌐 Chưa có trong máy, đang tải ROM từ server...");
-      container.innerHTML = '<div style="color:#00e5ff; text-align:center; padding-top:200px; font-size:1.2rem;">Đang tải dữ liệu trò chơi, vui lòng đợi...</div>';
-
-      const response = await fetch(romUrl);
-      if (!response.ok) throw new Error(`Lỗi tải ROM (${response.status}): ${response.statusText}`);
-      
-      romBlob = await response.blob();
-
-      // Lưu vào bộ nhớ máy người dùng cho lần sau
-      if (window.idbKeyval) {
-        await window.idbKeyval.set(`rom_${gameId}`, romBlob);
-        console.log("💾 Đã lưu ROM vào IndexedDB thành công.");
-      }
-    }
-
-    const blobUrl = URL.createObjectURL(romBlob);
-    startEmulator(core, blobUrl, gameTitle);
-
-    // Ghi nhận lịch sử chơi nếu đã đăng nhập
-    recordPlayHistory(gameId);
-
-  } catch (error) {
-    console.error("Lỗi khi nạp game:", error);
-    alert("Không thể khởi động game: " + error.message);
-  }
 }
 
 // =================================================================
@@ -488,3 +457,232 @@ window.addEventListener("DOMContentLoaded", () => {
   initAuth();
   loadGamesFromSupabase();
 });
+let isSignUpMode = false;
+
+function openAuthModal() {
+  const modal = document.getElementById("auth-modal");
+  if (modal) modal.style.display = "flex";
+}
+
+function closeAuthModal() {
+  const modal = document.getElementById("auth-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function toggleAuthMode() {
+  isSignUpMode = !isSignUpMode;
+  const title = document.getElementById("auth-modal-title");
+  const submitBtn = document.getElementById("btn-submit-auth");
+  const toggleBtn = document.getElementById("btn-toggle-auth");
+
+  if (isSignUpMode) {
+    title.innerText = "Đăng Ký Tài Khoản";
+    submitBtn.innerText = "Đăng ký";
+    submitBtn.setAttribute("onclick", "handleEmailAuth('signup')");
+    toggleBtn.innerText = "Đã có tài khoản? Đăng nhập";
+  } else {
+    title.innerText = "Đăng Nhập Game Thủ";
+    submitBtn.innerText = "Đăng nhập";
+    submitBtn.setAttribute("onclick", "handleEmailAuth('login')");
+    toggleBtn.innerText = "Chưa có tài khoản? Đăng ký ngay";
+  }
+}
+
+async function handleEmailAuth(mode) {
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value.trim();
+
+  if (!email || !password) {
+    alert("Vui lòng điền đầy đủ email và mật khẩu.");
+    return;
+  }
+
+  if (mode === "signup") {
+    const { error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) return alert("Lỗi đăng ký: " + error.message);
+    alert("Đăng ký thành công! Bạn có thể đăng nhập ngay.");
+    toggleAuthMode();
+  } else {
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) return alert("Lỗi đăng nhập: " + error.message);
+    closeAuthModal();
+  }
+}
+
+// Cập nhật lại nút hiển thị khi chưa đăng nhập
+function renderAuthUI() {
+  const authContainer = document.getElementById("auth-container");
+  if (!authContainer) return;
+
+  if (currentUser) {
+    const displayName = (userProfile && userProfile.username) 
+      ? userProfile.username 
+      : currentUser.email.split("@")[0];
+
+    authContainer.innerHTML = `
+      <div class="user-badge">
+        <span style="font-size:0.85rem; font-weight:600; color:var(--accent-color);">🎮 ${displayName}</span>
+        <button class="btn-edit" title="Đổi Nickname" onclick="openProfileModal('${displayName}')">✏️</button>
+      </div>
+      <button class="btn btn-secondary" onclick="logout()">Đăng xuất</button>
+    `;
+  } else {
+    authContainer.innerHTML = `
+      <button class="btn btn-primary" onclick="openAuthModal()">Đăng nhập / Đăng ký</button>
+    `;
+  }
+}
+// ================= BỔ SUNG HÀM ĐĂNG NHẬP GOOGLE & ĐĂNG XUẤT =================
+async function loginWithGoogle() {
+  if (!supabaseClient) {
+    alert("Chưa kết nối được với Supabase. Hãy kiểm tra lại URL và Key!");
+    return;
+  }
+
+  try {
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin // Tự động chuyển hướng về lại trang web sau khi đăng nhập
+      }
+    });
+
+    if (error) throw error;
+  } catch (err) {
+    console.error("Lỗi đăng nhập Google:", err);
+    alert("Lỗi đăng nhập Google: " + err.message);
+  }
+}
+// Hàm tải dữ liệu kèm theo dõi tiến độ % chi tiết
+async function fetchWithProgress(url, onProgress) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Lỗi tải (${response.status}): ${response.statusText}`);
+  }
+
+  // Lấy tổng dung lượng file từ Header (nếu server có cung cấp)
+  const contentLength = response.headers.get("content-length");
+  const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+  const reader = response.body.getReader();
+  let receivedBytes = 0;
+  const chunks = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunks.push(value);
+    receivedBytes += value.length;
+
+    // Bắn sự kiện cập nhật giao diện
+    if (onProgress) {
+      onProgress(receivedBytes, totalBytes);
+    }
+  }
+
+  // Ghép các mảng dữ liệu lại thành 1 file Blob hoàn chỉnh
+  return new Blob(chunks);
+}
+
+// Nâng cấp hàm mở game: Có hiển thị thanh phần trăm tải
+async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
+  currentGame = { id: gameId, title: gameTitle, core: core, isLocal: false };
+  const container = document.getElementById("game-container");
+  const placeholder = document.getElementById("game-placeholder");
+  if (placeholder) placeholder.style.display = "none";
+
+  try {
+    let romBlob = null;
+
+    // 1. Kiểm tra cache IndexedDB trong máy trước
+    if (window.idbKeyval) {
+      romBlob = await window.idbKeyval.get(`rom_${gameId}`);
+    }
+
+    if (romBlob) {
+      console.log("⚡ Đã có trong máy, nạp ngay lập tức!");
+      container.innerHTML = `
+        <div class="loading-box">
+          <div class="loading-title">⚡ Đang nạp ${gameTitle} từ bộ nhớ máy...</div>
+        </div>
+      `;
+    } else {
+      console.log("🌐 Đang tải game từ internet...");
+      
+      // Khởi tạo khung giao diện thanh tiến trình
+      container.innerHTML = `
+        <div class="loading-box">
+          <div class="loading-title">Đang tải: <span style="color:var(--accent-cyan);">${gameTitle}</span></div>
+          <div class="progress-track">
+            <div class="progress-fill" id="download-progress-bar"></div>
+          </div>
+          <div class="loading-stats">
+            <span id="download-size">Đang kết nối...</span>
+            <span class="loading-percent" id="download-percent">0%</span>
+          </div>
+        </div>
+      `;
+
+      const progressBar = document.getElementById("download-progress-bar");
+      const sizeText = document.getElementById("download-size");
+      const percentText = document.getElementById("download-percent");
+
+      // Tải game và cập nhật giao diện liên tục
+      romBlob = await fetchWithProgress(romUrl, (received, total) => {
+        const receivedMB = (received / (1024 * 1024)).toFixed(1);
+
+        if (total > 0) {
+          const totalMB = (total / (1024 * 1024)).toFixed(1);
+          const percent = Math.min(100, Math.round((received / total) * 100));
+
+          progressBar.style.width = `${percent}%`;
+          percentText.innerText = `${percent}%`;
+          sizeText.innerText = `${receivedMB} MB / ${totalMB} MB`;
+        } else {
+          // Trường hợp server không trả header content-length
+          sizeText.innerText = `Đã nạp: ${receivedMB} MB`;
+          percentText.innerText = "Đang tải...";
+        }
+      });
+
+      // Lưu file vào IndexedDB để lần chơi sau không cần tải lại
+      if (window.idbKeyval) {
+        await window.idbKeyval.set(`rom_${gameId}`, romBlob);
+        console.log("💾 Đã lưu ROM vào IndexedDB thành công.");
+      }
+    }
+
+    // 2. Nạp ROM vào trình giả lập và chạy
+    const blobUrl = URL.createObjectURL(romBlob);
+    startEmulator(core, blobUrl, gameTitle);
+
+    // Ghi lại lịch sử chơi
+    recordPlayHistory(gameId);
+
+  } catch (error) {
+    console.error("Lỗi khi nạp game:", error);
+    container.innerHTML = `
+      <div style="color:#ff5555; text-align:center; padding: 2rem;">
+        <p>❌ Không thể tải trò chơi!</p>
+        <small>${error.message}</small>
+      </div>
+    `;
+  }
+}
+
+async function logout() {
+  if (!supabaseClient) return;
+  
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    alert("Lỗi khi đăng xuất: " + error.message);
+  } else {
+    // Làm mới trang để xóa sạch trạng thái phiên đăng nhập cũ
+    window.location.reload();
+  }
+}
+
+// Gắn trực tiếp vào window để đảm bảo nút bấm HTML luôn gọi được
+window.loginWithGoogle = loginWithGoogle;
+window.logout = logout;

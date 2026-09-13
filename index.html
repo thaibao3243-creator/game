@@ -5,43 +5,70 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RetroCloud - Web Giả Lập Trực Tuyến</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Supabase JS Client từ CDN -->
+  <!-- Thư viện quản lý Cache IndexedDB & Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <header>
+
+  <!-- THANH ĐIỀU HƯỚNG TRÊN CÙNG -->
+  <header class="navbar">
     <div class="logo">🎮 RetroCloud</div>
-    <div class="room-panel">
-      <input type="text" id="room-input" placeholder="Nhập mã phòng...">
-      <button id="btn-join-room" class="btn btn-secondary">Vào phòng</button>
-      <button id="btn-create-room" class="btn btn-primary">Tạo phòng Online</button>
+    
+    <div class="nav-actions">
+      <!-- Phòng chơi Online -->
+      <div class="room-panel">
+        <input type="text" id="room-input" placeholder="Nhập mã phòng...">
+        <button id="btn-join-room" class="btn btn-secondary">Vào phòng</button>
+        <button id="btn-create-room" class="btn btn-primary">Tạo phòng</button>
+      </div>
+
+      <!-- Khu vực Tài khoản Game thủ -->
+      <div id="auth-container"></div>
     </div>
   </header>
 
-  <main>
+  <!-- NỘI DUNG CHÍNH TRUNG TÂM -->
+  <main class="main-content">
     <!-- Khu vực hiển thị màn hình game giả lập -->
     <section id="emulator-section">
       <div id="game-container">
         <div id="game-placeholder">
-          <p>Chọn một game bên dưới hoặc kéo thả file ROM từ máy tính vào đây</p>
+          <div class="placeholder-icon">🕹️</div>
+          <p>Chọn game bên dưới hoặc kéo thả ROM để bắt đầu</p>
         </div>
         <div id="game"></div>
       </div>
+
+      <!-- Thanh Cloud Save 3 Slot (hiện sau khi nạp game) -->
+      <div id="cloud-save-panel" class="cloud-save-bar" style="display:none;">
+        <span class="slot-title">Đám Mây:</span>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(1)">💾 Lưu Slot 1</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(1)">📂 Tải Slot 1</button>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(2)">💾 Lưu Slot 2</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(2)">📂 Tải Slot 2</button>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(3)">💾 Lưu Slot 3</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(3)">📂 Tải Slot 3</button>
+      </div>
     </section>
 
-    <!-- Khu vực tự tải ROM từ máy (cho PS1, GBA dung lượng lớn) -->
+    <!-- Khu vực tự tải ROM từ máy (File API 0đ) -->
     <section class="upload-section">
       <div class="drop-zone" id="drop-zone">
-        <span>📁 Kéo thả file ROM (.gba, .nes, .iso, .bin, .chd) vào đây</span>
+        <div class="drop-zone-text">
+          <span class="drop-icon">📁</span>
+          <span>Kéo thả file ROM (<strong>.gba, .nes, .iso, .chd</strong>) vào đây</span>
+        </div>
         <input type="file" id="file-input" accept=".gba,.nes,.snes,.iso,.bin,.chd,.zip" hidden>
         <button class="btn btn-outline" onclick="document.getElementById('file-input').click()">Chọn file từ máy</button>
       </div>
-      <div class="system-select">
-        <label for="core-selector">Chọn hệ máy cho file tự nạp:</label>
+
+      <div class="system-select-card">
+        <label for="core-selector">Hệ máy giả lập khi upload game:</label>
         <select id="core-selector">
           <option value="gba">Game Boy Advance (GBA)</option>
           <option value="psx">PlayStation 1 (PS1)</option>
-          <option value="nes">NES (4 nút)</option>
+          <option value="nes">NES (4 nút cổ điển)</option>
           <option value="snes">SNES (Đĩa mềm)</option>
         </select>
       </div>
@@ -49,30 +76,55 @@
 
     <!-- Danh sách game có sẵn từ Supabase -->
     <section class="library-section">
-      <h2>Thư viện Game sẵn có</h2>
+      <h2 class="section-title">Thư viện Game sẵn có</h2>
       <div class="game-grid" id="game-grid">
-        <p class="loading">Đang tải danh sách game...</p>
+        <p class="loading-state">Đang kết nối thư viện game...</p>
       </div>
     </section>
   </main>
-  <!-- Modal cập nhật Nickname -->
-<div id="profile-modal" class="modal-overlay" style="display:none;">
-  <div class="modal-box">
-    <h3>Thiết lập Hồ Sơ Game Thủ</h3>
-    <p>Chọn tên hiển thị khi tham gia phòng chơi và lưu điểm:</p>
-    
-    <div class="input-group">
-      <label for="input-username">Nickname mới:</label>
-      <input type="text" id="input-username" maxlength="20" placeholder="VD: DragonKnight...">
-    </div>
 
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeProfileModal()">Hủy</button>
-      <button class="btn btn-primary" onclick="saveUsername()">Lưu thay đổi</button>
+  <!-- MODAL ĐĂNG NHẬP / ĐĂNG KÝ -->
+  <div id="auth-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3 id="auth-modal-title">Đăng Nhập Game Thủ</h3>
+      
+      <div class="input-group">
+        <label for="auth-email">Email:</label>
+        <input type="email" id="auth-email" placeholder="name@example.com">
+      </div>
+
+      <div class="input-group">
+        <label for="auth-password">Mật khẩu:</label>
+        <input type="password" id="auth-password" placeholder="Tối thiểu 6 ký tự">
+      </div>
+
+      <div class="modal-actions-column">
+        <button class="btn btn-primary btn-block" id="btn-submit-auth" onclick="handleEmailAuth('login')">Đăng nhập</button>
+        <button class="btn btn-secondary btn-block" onclick="loginWithGoogle()">Đăng nhập bằng Google</button>
+        <button class="btn btn-outline btn-block" id="btn-toggle-auth" onclick="toggleAuthMode()">Chưa có tài khoản? Đăng ký ngay</button>
+        <button class="btn btn-dark btn-block" onclick="closeAuthModal()">Đóng</button>
+      </div>
     </div>
   </div>
-</div>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- MODAL CẬP NHẬT NICKNAME -->
+  <div id="profile-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3>Thiết lập Hồ Sơ</h3>
+      <p class="modal-sub">Chọn tên hiển thị khi chơi online và lưu game:</p>
+      
+      <div class="input-group">
+        <label for="input-username">Nickname mới:</label>
+        <input type="text" id="input-username" maxlength="20" placeholder="VD: DragonKnight...">
+      </div>
+
+      <div class="modal-actions-row">
+        <button class="btn btn-secondary" onclick="closeProfileModal()">Hủy</button>
+        <button class="btn btn-primary" onclick="saveUsername()">Lưu thay đổi</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
