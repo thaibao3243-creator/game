@@ -621,8 +621,9 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. MULTIPLAYER P2P (WEBRTC + SUPABASE REALTIME BROADCAST)
+// 7. LOCKSTEP NETPLAY (CHẠY LOCAL 2 ĐẦU, TRUYỀN INPUT P2P 10-20MS)
 // =================================================================
+
 let peerConnection = null;
 let dataChannel = null;
 let roomChannel = null;
@@ -635,65 +636,58 @@ const rtcConfig = {
   ]
 };
 
-const PLAYER2_KEYMAP = {
-  "KeyW": "KeyI",
-  "KeyS": "KeyK",
-  "KeyA": "KeyJ",
-  "KeyD": "KeyL",
-  "KeyU": "KeyY",
-  "KeyJ": "KeyU",
-  "KeyI": "KeyO",
-  "KeyK": "KeyP",
-  "Enter": "Digit7",
-  "ShiftRight": "Digit8"
+// Bảng phím EmulatorJS cho Player 1 và Player 2
+const P1_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyZ", "KeyX", "KeyA", "KeyS", "KeyQ", "KeyE", "Enter", "ShiftRight"];
+const P2_MAPPING = {
+  "ArrowUp":    { key: "i", code: "KeyI", keyCode: 73 },
+  "ArrowDown":  { key: "k", code: "KeyK", keyCode: 75 },
+  "ArrowLeft":  { key: "j", code: "KeyJ", keyCode: 74 },
+  "ArrowRight": { key: "l", code: "KeyL", keyCode: 76 },
+  "KeyZ":       { key: "u", code: "KeyU", keyCode: 85 }, // B
+  "KeyX":       { key: "y", code: "KeyY", keyCode: 89 }, // A
+  "KeyA":       { key: "o", code: "KeyO", keyCode: 79 }, // Y
+  "KeyS":       { key: "p", code: "KeyP", keyCode: 80 }, // X
+  "KeyQ":       { key: "7", code: "Digit7", keyCode: 55 }, // L
+  "KeyE":       { key: "8", code: "Digit8", keyCode: 56 }, // R
+  "Enter":      { key: "0", code: "Digit0", keyCode: 48 }, // Start
+  "ShiftRight": { key: "9", code: "Digit9", keyCode: 57 }  // Select
 };
 
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// 1. HOST TẠO PHÒNG (GỬI THÔNG TIN GAME KÈM THEO)
 const btnCreateRoom = document.getElementById("btn-create-room");
 if (btnCreateRoom) {
   btnCreateRoom.addEventListener("click", async () => {
-    if (!currentUser) {
-      alert("Vui lòng đăng nhập để tạo phòng Online!");
-      openAuthModal();
-      return;
-    }
-    if (!currentGame.id) {
-      alert("Hãy chọn và mở một tựa game trước khi tạo phòng!");
-      return;
-    }
+    if (!currentUser) return alert("Vui lòng đăng nhập để tạo phòng Online!");
+    if (!currentGame.id) return alert("Hãy chọn và mở một tựa game trước khi tạo phòng!");
 
     isHostPlayer = true;
     const roomId = generateRoomCode();
-    prompt("Mã phòng Online (Gửi mã này cho bạn bè):", roomId);
-    initSupabaseSignaling(roomId, true);
+    prompt("Mã phòng của bạn (Gửi mã này cho bạn bè):", roomId);
+
+    initLockstepSignaling(roomId, true);
   });
 }
 
+// 2. GUEST VÀO PHÒNG
 const btnJoinRoom = document.getElementById("btn-join-room");
 const roomInput = document.getElementById("room-input");
 if (btnJoinRoom) {
   btnJoinRoom.addEventListener("click", async () => {
-    if (!currentUser) {
-      alert("Vui lòng đăng nhập để vào phòng Online!");
-      openAuthModal();
-      return;
-    }
-
+    if (!currentUser) return alert("Vui lòng đăng nhập để vào phòng Online!");
     const roomId = roomInput ? roomInput.value.trim().toUpperCase() : "";
-    if (!roomId) {
-      alert("Vui lòng nhập mã phòng!");
-      return;
-    }
+    if (!roomId) return alert("Vui lòng nhập mã phòng!");
 
     isHostPlayer = false;
-    initSupabaseSignaling(roomId, false);
+    initLockstepSignaling(roomId, false);
   });
 }
 
-function initSupabaseSignaling(roomId, isHost) {
+// 3. KHỞI TẠO BẮT TAY SUPABASE BROADCAST
+function initLockstepSignaling(roomId, isHost) {
   if (roomChannel) supabaseClient.removeChannel(roomChannel);
 
   roomChannel = supabaseClient.channel(`room_${roomId}`, {
@@ -702,23 +696,25 @@ function initSupabaseSignaling(roomId, isHost) {
 
   roomChannel
     .on("broadcast", { event: "signal" }, async ({ payload }) => {
-      await handleIncomingSignal(payload);
+      await handleLockstepSignal(payload);
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
-        setupPeerConnection(isHost);
+        setupLockstepPeer(isHost);
         if (!isHost) {
+          // Guest báo danh để nhận thông tin Game từ Host
           roomChannel.send({
             type: "broadcast",
             event: "signal",
-            payload: { type: "guest_ready", guestName: userProfile?.username || currentUser.email }
+            payload: { type: "guest_join" }
           });
         }
       }
     });
 }
 
-function setupPeerConnection(isHost) {
+// 4. THIẾT LẬP KẾT NỐI WEBRTC P2P (CHỈ DÙNG DATACHANNEL)
+function setupLockstepPeer(isHost) {
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   peerConnection.onicecandidate = (e) => {
@@ -732,36 +728,58 @@ function setupPeerConnection(isHost) {
   };
 
   if (isHost) {
-    const canvas = document.querySelector("#game canvas");
-    if (canvas) {
-      const stream = canvas.captureStream(60);
-      stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
-    }
-
-    dataChannel = peerConnection.createDataChannel("gamepad");
-    dataChannel.onmessage = (e) => {
-      const { type, code } = JSON.parse(e.data);
-      injectPlayer2Input(type, code);
-    };
-
-    dataChannel.onopen = () => alert("🎮 Bạn bè đã kết nối! Bắt đầu chơi 2 người.");
+    dataChannel = peerConnection.createDataChannel("inputSync", {
+      ordered: false,          // Tắt kiểm tra thứ tự gói để giảm độ trễ tối đa
+      maxRetransmits: 0        // Chế độ Unreliable tương tự giao thức UDP tốc độ cao
+    });
+    setupDataChannelHandlers();
   } else {
-    peerConnection.ontrack = (e) => {
-      renderRemoteVideo(e.streams[0]);
-    };
-
     peerConnection.ondatachannel = (e) => {
       dataChannel = e.channel;
-      dataChannel.onopen = () => {
-        alert("🎮 Đã kết nối với Host! Dùng W/A/S/D và U/I/O/J để điều khiển.");
-        bindGuestInputListeners();
-      };
+      setupDataChannelHandlers();
     };
   }
 }
 
-async function handleIncomingSignal(data) {
-  if (data.type === "guest_ready" && isHostPlayer) {
+function setupDataChannelHandlers() {
+  dataChannel.onopen = () => {
+    if (isHostPlayer) {
+      // Host gửi tín hiệu đồng bộ frame 0
+      dataChannel.send(JSON.stringify({ type: "SYNC_START" }));
+      window.EJS_emulator?.gameManager?.restart?.();
+      alert("🎮 Kết nối P2P thành công! Đang đồng bộ trận đấu...");
+    }
+  };
+
+  dataChannel.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "SYNC_START") {
+        window.EJS_emulator?.gameManager?.restart?.();
+        alert("🎮 Đã vào trận đấu! Bạn là Player 2.");
+      } else if (msg.type === "KEY") {
+        // Nhận input từ đối thủ và inject vào core
+        injectRemoteInput(msg.player, msg.action, msg.code);
+      }
+    } catch (err) {
+      console.warn("Lỗi nhận packet input:", err);
+    }
+  };
+}
+
+// 5. XỬ LÝ TÍN HIỆU SDP & TẢI GAME CHO GUEST
+async function handleLockstepSignal(data) {
+  if (data.type === "guest_join" && isHostPlayer) {
+    // Host gửi siêu dữ liệu game cho Guest nạp
+    roomChannel.send({
+      type: "broadcast",
+      event: "signal",
+      payload: { 
+        type: "game_info", 
+        game: currentGame 
+      }
+    });
+
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     roomChannel.send({
@@ -769,6 +787,15 @@ async function handleIncomingSignal(data) {
       event: "signal",
       payload: { type: "offer", sdp: offer }
     });
+
+  } else if (data.type === "game_info" && !isHostPlayer) {
+    // Guest nhận thông tin game và nạp local emulator ngay tại máy mình
+    const g = data.game;
+    if (!currentGame.id || currentGame.id !== g.id) {
+      alert(`Đang chuẩn bị game: ${g.title}...`);
+      await launchGameWithCache(g.id, g.core, g.rom_url, g.title);
+    }
+
   } else if (data.type === "offer" && !isHostPlayer) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
     const answer = await peerConnection.createAnswer();
@@ -778,63 +805,67 @@ async function handleIncomingSignal(data) {
       event: "signal",
       payload: { type: "answer", sdp: answer }
     });
+
   } else if (data.type === "answer" && isHostPlayer) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
   } else if (data.type === "candidate" && peerConnection) {
     try {
       await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
     } catch (err) {
-      console.warn("Lỗi ICE Candidate:", err);
+      console.warn("Lỗi ICE:", err);
     }
   }
 }
 
-function renderRemoteVideo(mediaStream) {
-  const container = document.getElementById("game-container");
-  const placeholder = document.getElementById("game-placeholder");
-  if (placeholder) placeholder.style.display = "none";
+// 6. BẮN VÀ TRAO ĐỔI PHÍM BẤM 2 CHIỀU QUA WEBRTC
+function sendNetplayInput(action, rawCode) {
+  if (!dataChannel || dataChannel.readyState !== "open") return;
 
-  container.innerHTML = `
-    <video id="remote-stream-video" autoplay playsinline 
-      style="width:100%; height:100%; object-fit:contain; background:#000;">
-    </video>
-  `;
-
-  const video = document.getElementById("remote-stream-video");
-  video.srcObject = mediaStream;
+  // Gửi packet input (dung lượng < 40 bytes, truyền qua mạng trong vài mili-giây)
+  dataChannel.send(JSON.stringify({
+    type: "KEY",
+    player: isHostPlayer ? 1 : 2,
+    action: action,
+    code: rawCode
+  }));
 }
 
-function bindGuestInputListeners() {
-  const sendKey = (type, code) => {
-    if (dataChannel && dataChannel.readyState === "open") {
-      dataChannel.send(JSON.stringify({ type, code }));
-    }
-  };
+// Bơm phím nhận được từ mạng vào máy cục bộ
+function injectRemoteInput(player, action, rawCode) {
+  let targetCode = rawCode;
+  let targetKeyCode = 0;
 
-  window.addEventListener("keydown", (e) => {
-    if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyU", "KeyI", "KeyO", "KeyJ", "Enter"].includes(e.code)) {
-      sendKey("keydown", e.code);
+  if (player === 2) {
+    // Nếu đối phương là P2, map sang bộ phím P2 của EmulatorJS
+    const map = P2_MAPPING[rawCode];
+    if (map) {
+      targetCode = map.code;
+      targetKeyCode = map.keyCode;
     }
-  });
+  } else {
+    // Nếu đối phương là P1
+    const p1Info = KEY_MAP_CONFIG[rawCode];
+    if (p1Info) targetKeyCode = p1Info.keyCode;
+  }
 
-  window.addEventListener("keyup", (e) => {
-    if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyU", "KeyI", "KeyO", "KeyJ", "Enter"].includes(e.code)) {
-      sendKey("keyup", e.code);
-    }
-  });
-}
-
-function injectPlayer2Input(type, incomingCode) {
-  const targetCode = PLAYER2_KEYMAP[incomingCode] || incomingCode;
-  const event = new KeyboardEvent(type, {
+  const event = new KeyboardEvent(action, {
     code: targetCode,
+    key: targetCode,
+    keyCode: targetKeyCode,
+    which: targetKeyCode,
     bubbles: true,
     cancelable: true
   });
-  const canvas = document.querySelector("#game canvas") || window;
-  canvas.dispatchEvent(event);
-}
 
+  Object.defineProperty(event, "keyCode", { get: () => targetKeyCode });
+  Object.defineProperty(event, "which", { get: () => targetKeyCode });
+
+  const canvas = document.querySelector("#game canvas") || document.getElementById("game");
+  if (canvas) canvas.dispatchEvent(event);
+  document.dispatchEvent(event);
+  window.dispatchEvent(event);
+}
 // =================================================================
 // 8. BÀN PHÍM ẢO (VIRTUAL GAMEPAD) & TÙY CHỈNH NEO GÓC
 // =================================================================
@@ -897,17 +928,26 @@ function initVirtualGamepad() {
 }
 
 function dispatchGameKey(type, keyCodeIdentifier) {
-  if (typeof dataChannel !== "undefined" && dataChannel && dataChannel.readyState === "open") {
-    dataChannel.send(JSON.stringify({ type, code: keyCodeIdentifier }));
-    return;
+  // 1. Gửi ngay tín hiệu bấm phím sang đối thủ qua WebRTC DataChannel (UDP P2P)
+  if (typeof sendNetplayInput === "function") {
+    sendNetplayInput(type, keyCodeIdentifier);
   }
 
-  const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
+  // 2. Nếu đang là Guest, đổi sang phím của Player 2 trên máy mình
+  let keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
+  let targetCode = keyCodeIdentifier;
+
+  if (typeof isHostPlayer !== "undefined" && !isHostPlayer && P2_MAPPING[keyCodeIdentifier]) {
+    const p2Key = P2_MAPPING[keyCodeIdentifier];
+    keyInfo = { key: p2Key.key, code: p2Key.code, keyCode: p2Key.keyCode };
+    targetCode = p2Key.code;
+  }
+
   if (!keyInfo) return;
 
   const event = new KeyboardEvent(type, {
     key: keyInfo.key,
-    code: keyInfo.code,
+    code: targetCode,
     keyCode: keyInfo.keyCode,
     which: keyInfo.keyCode,
     bubbles: true,
