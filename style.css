@@ -179,16 +179,37 @@ body {
 }
 
 #game {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: 10;
+}
+#game canvas {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+}
+#game-loader {
+  position: absolute;
+  inset: 0;
+  background: #0b0d14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
 }
 
 #game-placeholder {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.8rem;
   color: var(--text-secondary);
+  z-index: 20;
 }
 
 .placeholder-icon {
@@ -670,4 +691,272 @@ body {
   background: rgba(0, 229, 255, 0.15);
   border-color: var(--accent-cyan);
   color: var(--accent-cyan);
+}
+/* ================= TỐI ƯU GIAO DIỆN CẢM ỨNG & NÚT ẢO ================= */
+
+/* Thanh tiện ích: Chuyển ra chính giữa đỉnh để giải phóng hoàn toàn 2 góc cho nút L và R */
+/* Thanh nút tiện ích luôn luôn nổi trên cùng mọi lớp canvas của EmulatorJS */
+.mobile-top-bar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 999 !important; /* Đẩy lên cao nhất để không bị game che */
+  background: rgba(20, 23, 36, 0.85);
+  border: 1px solid var(--border-color);
+  padding: 4px 10px;
+  border-radius: 24px;
+  backdrop-filter: blur(8px);
+}
+
+.btn-icon {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.btn-icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Khung bọc phím: BỎ HOÀN TOÀN flexbox, dùng không gian tọa độ tự do (Absolute) */
+.gamepad-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+/* Các nút bấm độc lập */
+.pad-element {
+  position: absolute;
+  pointer-events: auto;
+  transform-origin: center center;
+  transition: outline 0.15s, box-shadow 0.15s;
+  touch-action: none;
+}
+/* Tọa độ mặc định chuẩn - Không đè nhau */
+#pad-l       { top: 20px; left: 20px; }
+#pad-r       { top: 20px; right: 20px; }
+#pad-dpad    { bottom: 30px; left: 30px; }
+#pad-actions { bottom: 30px; right: 30px; }
+#pad-select  { bottom: 25px; left: calc(50% - 70px); }
+#pad-start   { bottom: 25px; left: calc(50% + 15px); }
+
+/* Nút bấm vật lý ảo */
+.v-btn {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  font-weight: bold;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.v-btn:active, .v-btn.pressed {
+  background: rgba(0, 229, 255, 0.55);
+  border-color: var(--accent-cyan);
+  transform: scale(0.92);
+}
+
+
+/* Nút vai L / R */
+.v-btn-shoulder { width: 68px; height: 36px; border-radius: 18px; font-size: 0.85rem; }
+.v-btn-pill     { width: 62px; height: 28px; border-radius: 14px; font-size: 0.65rem; letter-spacing: 0.5px; }
+
+.dpad-cluster   { width: 130px; height: 130px; }
+.dpad-btn {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+}
+
+.dpad-btn.up    { top: 0; left: 44px; }
+.dpad-btn.down  { bottom: 0; left: 44px; }
+.dpad-btn.left  { top: 44px; left: 0; }
+.dpad-btn.right { top: 44px; right: 0; }
+.dpad-center    { position: absolute; top: 44px; left: 44px; width: 42px; height: 42px; background: rgba(255, 255, 255, 0.05); }
+/* Cụm 4 nút A/B/X/Y */
+.action-cluster { width: 130px; height: 130px; }
+.action-btn {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  font-size: 0.95rem;
+}
+.action-btn.x { top: 0; left: 43px; color: #4fc3f7; }
+.action-btn.y { top: 43px; left: 0; color: #81c784; }
+.action-btn.b { bottom: 0; left: 43px; color: #e57373; }
+.action-btn.a { top: 43px; right: 0; color: #ffb74d; }
+
+/* ================= TRẠNG THÁI CẤU HÌNH & KÉO THẢ TỪNG NÚT ================= */
+.gamepad-overlay.is-editing .pad-element {
+  outline: 1.5px dashed rgba(0, 229, 255, 0.45);
+  background: rgba(0, 229, 255, 0.08);
+  border-radius: 12px;
+  cursor: grab;
+}
+
+.gamepad-overlay.is-editing .pad-element.is-selected {
+  outline: 2px solid var(--accent-cyan) !important;
+  background: rgba(0, 229, 255, 0.25) !important;
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.7);
+}
+
+/* Bảng menu trượt điều khiển */
+.gamepad-config-bar {
+  position: absolute;
+  top: 55px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 23, 36, 0.95);
+  border: 1px solid var(--accent-cyan);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+  border-radius: 12px;
+  padding: 0.9rem 1.2rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 90%;
+  max-width: 320px;
+  backdrop-filter: blur(8px);
+}
+
+.config-header {
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.4rem;
+  color: var(--text-secondary);
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.config-item label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+}
+
+.config-item input[type="range"] {
+  accent-color: var(--accent-cyan);
+  height: 5px;
+}
+
+.config-btns {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.config-tip {
+  font-size: 0.7rem;
+  color: var(--accent-cyan);
+  text-align: center;
+}
+
+/* ================= RESPONSIVE DI ĐỘNG ================= */
+@media (max-width: 768px) {
+  .navbar {
+    padding: 0.8rem 1rem;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .nav-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .room-panel input {
+    width: 120px;
+  }
+
+  .main-content {
+    padding: 1rem 0.6rem;
+  }
+
+#game-container {
+  width: 100%;
+  height: 520px;
+  background: #000;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+  .upload-section {
+    flex-direction: column;
+  }
+
+  .library-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-wrapper input {
+    width: 100%;
+  }
+
+  .system-filter-group {
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+}
+
+/* Xoay ngang điện thoại (Full screen Gaming) */
+@media (max-height: 500px) and (orientation: landscape) {
+  .navbar, .upload-section, .library-section {
+    display: none !important;
+  }
+
+  body, .main-content {
+    padding: 0;
+    margin: 0;
+  }
+
+#game-container {
+  width: 100%;
+  height: 520px;
+  background: #000;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+  .cloud-save-bar {
+    display: none !important;
+  }
 }

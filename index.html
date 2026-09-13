@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RetroCloud - Web Giả Lập Trực Tuyến</title>
   <link rel="stylesheet" href="style.css">
   <!-- Thư viện quản lý Cache IndexedDB & Supabase -->
@@ -31,24 +31,98 @@
   <!-- NỘI DUNG CHÍNH TRUNG TÂM -->
   <main class="main-content">
     <!-- Khu vực hiển thị màn hình game giả lập -->
+<!-- Khu vực hiển thị màn hình game giả lập -->
     <section id="emulator-section">
       <div id="game-container">
+        <!-- 1. Thanh tiện ích luôn nổi trên cùng -->
+        <div class="mobile-top-bar">
+          <button id="btn-config-pad" class="btn-icon" title="Tùy chỉnh phím">⚙️</button>
+          <button id="btn-toggle-pad" class="btn-icon" title="Ẩn/Hiện phím ảo">🎮</button>
+          <button id="btn-fullscreen" class="btn-icon" title="Toàn màn hình">⛶</button>
+        </div>
+
+        <!-- 2. Màn hình chờ ban đầu -->
         <div id="game-placeholder">
           <div class="placeholder-icon">🕹️</div>
           <p>Chọn game bên dưới hoặc kéo thả ROM để bắt đầu</p>
         </div>
+
+        <!-- 3. Lớp phủ hiển thị phần trăm / trạng thái tải (Mặc định ẩn) -->
+        <div id="game-loader" style="display: none;">
+          <div class="loading-box">
+            <div class="loading-title" id="loader-title">Đang kết nối...</div>
+            <div class="progress-track" id="loader-track">
+              <div class="progress-fill" id="download-progress-bar"></div>
+            </div>
+            <div class="loading-stats">
+              <span id="download-size"></span>
+              <span class="loading-percent" id="download-percent"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Khung chạy game của EmulatorJS -->
         <div id="game"></div>
+
+        <!-- 5. Bàn phím ảo tách rời từng nút -->
+        <div id="virtual-gamepad" class="gamepad-overlay">
+          <div id="pad-l" class="pad-element" data-id="pad-l" data-name="Nút vai L">
+            <button class="v-btn v-btn-shoulder" data-key="KeyQ">L</button>
+          </div>
+          <div id="pad-r" class="pad-element" data-id="pad-r" data-name="Nút vai R">
+            <button class="v-btn v-btn-shoulder" data-key="KeyE">R</button>
+          </div>
+          <div id="pad-dpad" class="pad-element dpad-cluster" data-id="pad-dpad" data-name="Cụm D-Pad">
+            <button class="v-btn dpad-btn up" data-key="ArrowUp">▲</button>
+            <button class="v-btn dpad-btn left" data-key="ArrowLeft">◀</button>
+            <div class="dpad-center"></div>
+            <button class="v-btn dpad-btn right" data-key="ArrowRight">▶</button>
+            <button class="v-btn dpad-btn down" data-key="ArrowDown">▼</button>
+          </div>
+          <div id="pad-select" class="pad-element" data-id="pad-select" data-name="Nút SELECT">
+            <button class="v-btn v-btn-pill" data-key="ShiftRight">SELECT</button>
+          </div>
+          <div id="pad-start" class="pad-element" data-id="pad-start" data-name="Nút START">
+            <button class="v-btn v-btn-pill" data-key="Enter">START</button>
+          </div>
+          <div id="pad-actions" class="pad-element action-cluster" data-id="pad-actions" data-name="Cụm nút A/B/X/Y">
+            <button class="v-btn action-btn x" data-key="KeyS">X</button>
+            <button class="v-btn action-btn y" data-key="KeyA">Y</button>
+            <button class="v-btn action-btn b" data-key="KeyZ">B</button>
+            <button class="v-btn action-btn a" data-key="KeyX">A</button>
+          </div>
+        </div>
+
+        <!-- 6. Bảng tùy chỉnh kích thước & vị trí phím -->
+        <div id="gamepad-config-bar" class="gamepad-config-bar" style="display: none;">
+          <div class="config-header">
+            <span>Đang chọn: <strong id="cfg-target-name">Toàn bộ phím</strong></span>
+          </div>
+          <div class="config-item">
+            <label>Kích thước: <span id="val-pad-scale">100%</span></label>
+            <input type="range" id="slider-pad-scale" min="60" max="170" value="100">
+          </div>
+          <div class="config-item">
+            <label>Độ mờ: <span id="val-pad-opacity">80%</span></label>
+            <input type="range" id="slider-pad-opacity" min="15" max="100" value="80">
+          </div>
+          <div class="config-btns">
+            <button class="btn btn-sm btn-outline" onclick="resetGamepadLayout()">Mặc định</button>
+            <button class="btn btn-sm btn-primary" onclick="toggleGamepadConfig(false)">Xong</button>
+          </div>
+          <p class="config-tip">💡 Chạm vào nút bất kỳ để chọn, sau đó kéo thả hoặc chỉnh kích thước riêng.</p>
+        </div>
       </div>
 
-      <!-- Thanh Cloud Save 3 Slot (hiện sau khi nạp game) -->
+      <!-- Thanh Cloud Save 3 Slot -->
       <div id="cloud-save-panel" class="cloud-save-bar" style="display:none;">
         <span class="slot-title">Đám Mây:</span>
-        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(1)">💾 Lưu Slot 1</button>
-        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(1)">📂 Tải Slot 1</button>
-        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(2)">💾 Lưu Slot 2</button>
-        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(2)">📂 Tải Slot 2</button>
-        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(3)">💾 Lưu Slot 3</button>
-        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(3)">📂 Tải Slot 3</button>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(1)">💾 Lưu 1</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(1)">📂 Tải 1</button>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(2)">💾 Lưu 2</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(2)">📂 Tải 2</button>
+        <button class="btn btn-sm btn-secondary" onclick="saveToCloud(3)">💾 Lưu 3</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFromCloud(3)">📂 Tải 3</button>
       </div>
     </section>
 

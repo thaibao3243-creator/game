@@ -1,13 +1,13 @@
 // =================================================================
-// 1. CẤU HÌNH SUPABASE CLIENT
+// 1. CẤU HÌNH SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
 // =================================================================
 const SUPABASE_URL = "https://kmypjbgjvkkbmyaomhrt.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtteXBqYmdqdmtrYm15YW9taHJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyOTQxMjgsImV4cCI6MjEwNDg3MDEyOH0.LehadH5EP9rtre0Ielz4U3kuQ8wE6rZMw_yjg6iS_kw";
 
 const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Biến trạng thái toàn cục (State)
 let currentUser = null;
+let userProfile = null;
 let currentGame = {
   id: null,
   title: null,
@@ -16,14 +16,150 @@ let currentGame = {
 };
 
 // =================================================================
-// 2. KHỞI TẠO VÀ CHẠY EMULATORJS
+// 2. TẢI VÀ KHỞI TẠO EMULATORJS
 // =================================================================
-function startEmulator(core, romSource, gameTitle = "Retro Game") {
+async function fetchWithProgress(url, onProgress) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Máy chủ từ chối (${response.status}): ${response.statusText}`);
+  }
+
+  if (!response.body || !response.body.getReader) {
+    const blob = await response.blob();
+    if (onProgress) onProgress(blob.size, blob.size);
+    return blob;
+  }
+
+  const contentLength = response.headers.get("content-length");
+  const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+  const reader = response.body.getReader();
+  let receivedBytes = 0;
+  const chunks = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunks.push(value);
+    receivedBytes += value.length;
+
+    if (onProgress) {
+      onProgress(receivedBytes, totalBytes);
+    }
+  }
+
+  return new Blob(chunks);
+}
+
+async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
+  currentGame = { id: gameId, title: gameTitle, core: core, isLocal: false };
+
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
   if (placeholder) placeholder.style.display = "none";
 
-  container.innerHTML = '<div id="game"></div>';
+  let loader = document.getElementById("game-loader");
+  if (!loader && container) {
+    loader = document.createElement("div");
+    loader.id = "game-loader";
+    loader.innerHTML = `
+      <div class="loading-box">
+        <div class="loading-title" id="loader-title">Đang kết nối...</div>
+        <div class="progress-track" id="loader-track">
+          <div class="progress-fill" id="download-progress-bar"></div>
+        </div>
+        <div class="loading-stats">
+          <span id="download-size"></span>
+          <span class="loading-percent" id="download-percent"></span>
+        </div>
+      </div>
+    `;
+    container.appendChild(loader);
+  }
+
+  const loaderTitle = document.getElementById("loader-title");
+  const loaderTrack = document.getElementById("loader-track");
+  const progressBar = document.getElementById("download-progress-bar");
+  const sizeText = document.getElementById("download-size");
+  const percentText = document.getElementById("download-percent");
+
+  if (loader) loader.style.display = "flex";
+
+  try {
+    let romBlob = null;
+
+    if (window.idbKeyval) {
+      const cached = await window.idbKeyval.get(`rom_${gameId}`);
+      if (cached instanceof Blob) {
+        romBlob = cached;
+      } else if (cached && cached.blob) {
+        romBlob = cached.blob;
+      }
+    }
+
+    if (romBlob) {
+      if (loaderTrack) loaderTrack.style.display = "none";
+      if (sizeText) sizeText.innerText = "";
+      if (percentText) percentText.innerText = "";
+      if (loaderTitle) loaderTitle.innerHTML = `⚡ Đang nạp <span style="color:var(--accent-cyan);">${gameTitle}</span> từ bộ nhớ...`;
+    } else {
+      if (loaderTrack) loaderTrack.style.display = "block";
+      if (loaderTitle) loaderTitle.innerHTML = `Đang tải: <span style="color:var(--accent-cyan);">${gameTitle}</span>`;
+
+      romBlob = await fetchWithProgress(romUrl, (received, total) => {
+        const receivedMB = (received / (1024 * 1024)).toFixed(1);
+        if (total > 0) {
+          const totalMB = (total / (1024 * 1024)).toFixed(1);
+          const percent = Math.min(100, Math.round((received / total) * 100));
+          if (progressBar) progressBar.style.width = `${percent}%`;
+          if (percentText) percentText.innerText = `${percent}%`;
+          if (sizeText) sizeText.innerText = `${receivedMB} MB / ${totalMB} MB`;
+        } else {
+          if (sizeText) sizeText.innerText = `Đã nhận: ${receivedMB} MB`;
+          if (percentText) percentText.innerText = "Đang tải...";
+        }
+      });
+
+      if (window.idbKeyval) {
+        await window.idbKeyval.set(`rom_${gameId}`, {
+          blob: romBlob,
+          title: gameTitle,
+          core: core.toUpperCase(),
+          savedAt: new Date().toLocaleDateString("vi-VN")
+        });
+      }
+    }
+
+    const blobUrl = URL.createObjectURL(romBlob);
+    startEmulator(core, blobUrl, gameTitle);
+    recordPlayHistory(gameId);
+
+  } catch (error) {
+    console.error("Lỗi khi nạp game:", error);
+    alert("❌ Lỗi nạp game: " + error.message);
+    if (loader) loader.style.display = "none";
+    if (placeholder) placeholder.style.display = "flex";
+  }
+}
+
+function startEmulator(core, romSource, gameTitle = "Retro Game") {
+  const placeholder = document.getElementById("game-placeholder");
+  const loader = document.getElementById("game-loader");
+  const cloudBar = document.getElementById("cloud-save-panel");
+
+  if (placeholder) placeholder.style.display = "none";
+  if (loader) loader.style.display = "none";
+  if (cloudBar) cloudBar.style.display = "flex";
+
+  let gameDiv = document.getElementById("game");
+  if (!gameDiv) {
+    gameDiv = document.createElement("div");
+    gameDiv.id = "game";
+    document.getElementById("game-container").appendChild(gameDiv);
+  } else {
+    gameDiv.innerHTML = "";
+  }
 
   window.EJS_player = "#game";
   window.EJS_core = core;
@@ -32,7 +168,6 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/";
   window.EJS_startOnLoaded = true;
 
-  // ================= VÔ HIỆU HÓA CÁC NÚT SAVE / LOAD MẶC ĐỊNH =================
   const noSaveButtons = {
     playPause: true,
     restart: true,
@@ -41,7 +176,6 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
     settings: true,
     fullscreen: true,
     gamepad: true,
-    // Tắt toàn bộ tính năng lưu/nạp mặc định
     saveState: false,
     loadState: false,
     quickSave: false,
@@ -50,6 +184,8 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
     loadSavFiles: false,
     cacheManager: false
   };
+  window.EJS_buttons = noSaveButtons;
+  window.EJS_defaultButtons = noSaveButtons;
 
   const oldScript = document.getElementById("ejs-loader");
   if (oldScript) oldScript.remove();
@@ -58,13 +194,12 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   script.id = "ejs-loader";
   script.src = "https://cdn.emulatorjs.org/stable/data/loader.js";
   document.body.appendChild(script);
-  window.EJS_buttons = noSaveButtons;
-  window.EJS_defaultButtons = noSaveButtons;
+
   updateSaveSlotUI();
 }
 
 // =================================================================
-// 3. TỰ NẠP FILE ROM CỤC BỘ (KÉO THẢ / FILE API)
+// 3. NẠP ROM CỤC BỘ (KÉO THẢ / FILE INPUT)
 // =================================================================
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("file-input");
@@ -108,9 +243,9 @@ if (dropZone) {
 }
 
 // =================================================================
-// 4. QUẢN LÝ THƯ VIỆN GAME & BỘ LỌC (SEARCH / FILTER)
+// 4. QUẢN LÝ THƯ VIỆN GAME & BỘ LỌC TÌM KIẾM
 // =================================================================
-let allGamesList = [];       // Cache toàn bộ danh sách game
+let allGamesList = [];
 let currentFilterSystem = "ALL";
 let currentSearchKeyword = "";
 
@@ -132,7 +267,6 @@ async function loadGamesFromSupabase() {
   }
 }
 
-// Khởi tạo sự kiện tìm kiếm và nút lọc hệ máy
 function initFilterEvents() {
   const searchInput = document.getElementById("search-input");
   const filterGroup = document.getElementById("system-filters");
@@ -158,21 +292,17 @@ function initFilterEvents() {
   }
 }
 
-// Lọc và hiển thị thẻ game
 function renderFilteredGames() {
   const grid = document.getElementById("game-grid");
   if (!grid) return;
 
   const filtered = allGamesList.filter((game) => {
-    // Lọc theo hệ máy (so khớp core hoặc system)
     const matchSystem = 
       currentFilterSystem === "ALL" || 
       game.core?.toUpperCase() === currentFilterSystem ||
       game.system?.toUpperCase() === currentFilterSystem;
 
-    // Lọc theo tên tìm kiếm
     const matchKeyword = game.title.toLowerCase().includes(currentSearchKeyword);
-
     return matchSystem && matchKeyword;
   });
 
@@ -202,11 +332,11 @@ function renderFilteredGames() {
     grid.appendChild(card);
   });
 }
+
 // =================================================================
-// 5. SUPABASE AUTH (QUẢN LÝ TÀI KHOẢN)
+// 5. SUPABASE AUTH & HỒ SƠ TÀI KHOẢN
 // =================================================================
-// Biến lưu trữ hồ sơ người chơi
-let userProfile = null;
+let isSignUpMode = false;
 
 async function initAuth() {
   if (!supabaseClient) return;
@@ -231,7 +361,6 @@ async function initAuth() {
   });
 }
 
-// Lấy thông tin từ bảng profiles
 async function fetchUserProfile() {
   try {
     const { data, error } = await supabaseClient
@@ -248,7 +377,6 @@ async function fetchUserProfile() {
   }
 }
 
-// Hiển thị UI có gắn nút chỉnh sửa Nickname
 function renderAuthUI() {
   const authContainer = document.getElementById("auth-container");
   if (!authContainer) return;
@@ -259,45 +387,109 @@ function renderAuthUI() {
       : currentUser.email.split("@")[0];
 
     authContainer.innerHTML = `
-      <div class="user-badge">
-        <span style="font-size:0.85rem; font-weight:600; color:var(--accent-color);">🎮 ${displayName}</span>
-        <button class="btn-edit" title="Đổi Nickname" onclick="openProfileModal('${displayName}')">✏️</button>
+      <div class="user-badge" style="cursor:pointer;" onclick="openAccountModal()" title="Mở Quản Lý Tài Khoản">
+        <span style="font-size:0.85rem; font-weight:600; color:var(--accent-cyan);">🎮 ${displayName}</span>
+        <button class="btn-edit">⚙️</button>
       </div>
       <button class="btn btn-secondary" onclick="logout()">Đăng xuất</button>
     `;
   } else {
     authContainer.innerHTML = `
-      <button class="btn btn-primary" onclick="loginWithGoogle()">Đăng nhập Google</button>
+      <button class="btn btn-primary" onclick="openAuthModal()">Đăng nhập / Đăng ký</button>
     `;
   }
 }
 
-// Điều khiển Modal
-function openProfileModal(currentName) {
-  const modal = document.getElementById("profile-modal");
-  const input = document.getElementById("input-username");
-  if (input) input.value = currentName || "";
+async function loginWithGoogle() {
+  if (!supabaseClient) {
+    alert("Chưa kết nối được với Supabase!");
+    return;
+  }
+  try {
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin }
+    });
+    if (error) throw error;
+  } catch (err) {
+    alert("Lỗi đăng nhập Google: " + err.message);
+  }
+}
+
+async function logout() {
+  if (!supabaseClient) return;
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    alert("Lỗi khi đăng xuất: " + error.message);
+  } else {
+    window.location.reload();
+  }
+}
+
+function openAuthModal() {
+  const modal = document.getElementById("auth-modal");
   if (modal) modal.style.display = "flex";
 }
 
-function closeProfileModal() {
-  const modal = document.getElementById("profile-modal");
+function closeAuthModal() {
+  const modal = document.getElementById("auth-modal");
   if (modal) modal.style.display = "none";
 }
 
-// Cập nhật Nickname vào database
+function toggleAuthMode() {
+  isSignUpMode = !isSignUpMode;
+  const title = document.getElementById("auth-modal-title");
+  const submitBtn = document.getElementById("btn-submit-auth");
+  const toggleBtn = document.getElementById("btn-toggle-auth");
+
+  if (isSignUpMode) {
+    if (title) title.innerText = "Đăng Ký Tài Khoản";
+    if (submitBtn) {
+      submitBtn.innerText = "Đăng ký";
+      submitBtn.setAttribute("onclick", "handleEmailAuth('signup')");
+    }
+    if (toggleBtn) toggleBtn.innerText = "Đã có tài khoản? Đăng nhập";
+  } else {
+    if (title) title.innerText = "Đăng Nhập Game Thủ";
+    if (submitBtn) {
+      submitBtn.innerText = "Đăng nhập";
+      submitBtn.setAttribute("onclick", "handleEmailAuth('login')");
+    }
+    if (toggleBtn) toggleBtn.innerText = "Chưa có tài khoản? Đăng ký ngay";
+  }
+}
+
+async function handleEmailAuth(mode) {
+  const emailInput = document.getElementById("auth-email");
+  const passInput = document.getElementById("auth-password");
+  if (!emailInput || !passInput) return;
+
+  const email = emailInput.value.trim();
+  const password = passInput.value.trim();
+
+  if (!email || !password) {
+    alert("Vui lòng điền đầy đủ email và mật khẩu.");
+    return;
+  }
+
+  if (mode === "signup") {
+    const { error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) return alert("Lỗi đăng ký: " + error.message);
+    alert("Đăng ký thành công! Bạn có thể đăng nhập ngay.");
+    toggleAuthMode();
+  } else {
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) return alert("Lỗi đăng nhập: " + error.message);
+    closeAuthModal();
+  }
+}
+
 async function saveUsername() {
   const input = document.getElementById("input-username");
   const newName = input ? input.value.trim() : "";
 
-  if (!newName) {
-    alert("Nickname không được để trống!");
-    return;
-  }
-  if (newName.length < 3) {
-    alert("Nickname phải có tối thiểu 3 ký tự!");
-    return;
-  }
+  if (!newName) return alert("Nickname không được để trống!");
+  if (newName.length < 3) return alert("Nickname phải có tối thiểu 3 ký tự!");
 
   try {
     const { error } = await supabaseClient
@@ -310,36 +502,24 @@ async function saveUsername() {
     if (!userProfile) userProfile = {};
     userProfile.username = newName;
 
-    closeProfileModal();
     renderAuthUI();
     alert("Cập nhật Nickname thành công!");
-
   } catch (err) {
     alert("Không thể lưu Nickname: " + err.message);
   }
 }
 
 // =================================================================
-// 6. CLOUD SAVE & LOAD (ĐÃ SỬA CHUẨN API EMULATORJS)
+// 6. CLOUD SAVE & LOAD (BUCKET 'SaveGame')
 // =================================================================
 async function saveToCloud(slotNumber) {
-  if (!currentUser) {
-    alert("Vui lòng đăng nhập để sử dụng tính năng Lưu đám mây!");
-    return;
-  }
-  if (!currentGame.id) {
-    alert("Chưa có game nào đang chạy để lưu.");
-    return;
-  }
+  if (!currentUser) return alert("Vui lòng đăng nhập để lưu đám mây!");
+  if (!currentGame.id) return alert("Chưa có game nào đang chạy để lưu.");
   
   const gm = window.EJS_emulator?.gameManager;
-  if (!gm) {
-    alert("Trình giả lập chưa sẵn sàng.");
-    return;
-  }
+  if (!gm) return alert("Trình giả lập chưa sẵn sàng.");
 
   try {
-    // 1. Lấy dữ liệu save từ EmulatorJS (hỗ trợ cả getSave và getState)
     let saveBinary = null;
     if (typeof gm.getSave === "function") {
       saveBinary = await gm.getSave();
@@ -354,7 +534,6 @@ async function saveToCloud(slotNumber) {
 
     const filePath = `${currentUser.id}/${currentGame.id}_slot${slotNumber}.sav`;
 
-    // 2. Upload file nhị phân lên bucket 'SaveGame'
     const { error: uploadError } = await supabaseClient.storage
       .from("SaveGame")
       .upload(filePath, saveBinary, {
@@ -364,7 +543,6 @@ async function saveToCloud(slotNumber) {
 
     if (uploadError) throw uploadError;
 
-    // 3. Cập nhật vào bảng user_saves
     const { error: dbError } = await supabaseClient
       .from("user_saves")
       .upsert({
@@ -388,42 +566,29 @@ async function saveToCloud(slotNumber) {
 }
 
 async function loadFromCloud(slotNumber) {
-  if (!currentUser) {
-    alert("Vui lòng đăng nhập để tải dữ liệu lưu!");
-    return;
-  }
-  if (!currentGame.id) {
-    alert("Hãy mở game trước khi tải file lưu.");
-    return;
-  }
+  if (!currentUser) return alert("Vui lòng đăng nhập để tải save!");
+  if (!currentGame.id) return alert("Hãy mở game trước khi tải file lưu.");
 
   const gm = window.EJS_emulator?.gameManager;
-  if (!gm) {
-    alert("Trình giả lập chưa sẵn sàng.");
-    return;
-  }
+  if (!gm) return alert("Trình giả lập chưa sẵn sàng.");
 
   try {
     const filePath = `${currentUser.id}/${currentGame.id}_slot${slotNumber}.sav`;
 
-    // 1. Tải file từ Supabase Storage bucket 'SaveGame'
     const { data, error } = await supabaseClient.storage.from("SaveGame").download(filePath);
     if (error) throw new Error("Chưa có bản lưu nào ở Slot này.");
 
-    // 2. Chuyển dữ liệu sang mảng Byte (Uint8Array)
     const arrayBuffer = await data.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
 
-    // 3. Nạp vào EmulatorJS bằng hàm loadSave chuẩn
     if (typeof gm.loadSave === "function") {
       gm.loadSave(uint8Array);
     } else if (typeof gm.loadState === "function") {
       gm.loadState(uint8Array);
     } else {
-      throw new Error("Phiên bản EmulatorJS này không hỗ trợ API nạp save trực tiếp.");
+      throw new Error("Không hỗ trợ API nạp save trực tiếp.");
     }
 
-    // Khởi động lại core để nạp dữ liệu save mới
     if (typeof gm.restart === "function") {
       gm.restart();
     }
@@ -435,16 +600,11 @@ async function loadFromCloud(slotNumber) {
     alert("Tải file lưu thất bại: " + err.message);
   }
 }
+
 async function updateSaveSlotUI() {
   const savePanel = document.getElementById("cloud-save-panel");
   if (!savePanel) return;
-
-  if (!currentUser || !currentGame.id) {
-    savePanel.style.display = "none";
-    return;
-  }
-
-  savePanel.style.display = "flex";
+  savePanel.style.display = (!currentUser || !currentGame.id) ? "none" : "flex";
 }
 
 async function recordPlayHistory(gameId) {
@@ -456,20 +616,18 @@ async function recordPlayHistory(gameId) {
       last_played: new Date().toISOString()
     }, { onConflict: "user_id,game_id" });
   } catch (e) {
-    console.warn("Không thể ghi log lịch sử chơi:", e);
+    console.warn("Không thể ghi lịch sử chơi:", e);
   }
 }
 
 // =================================================================
-// 7. HỆ THỐNG NETPLAY ONLINE (P2P WEBRTC + SUPABASE BROADCAST)
+// 7. MULTIPLAYER P2P (WEBRTC + SUPABASE REALTIME BROADCAST)
 // =================================================================
-
 let peerConnection = null;
 let dataChannel = null;
 let roomChannel = null;
 let isHostPlayer = false;
 
-// Cấu hình Google STUN miễn phí cho mạng WAN (Internet công cộng)
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -477,35 +635,31 @@ const rtcConfig = {
   ]
 };
 
-// Phím mặc định cho Player 2 trên EmulatorJS
-// Host sẽ nhận tín hiệu từ Guest và kích hoạt các phím này
 const PLAYER2_KEYMAP = {
-  "KeyW": "KeyI",       // Lên
-  "KeyS": "KeyK",       // Xuống
-  "KeyA": "KeyJ",       // Trái
-  "KeyD": "KeyL",       // Phải
-  "KeyU": "KeyY",       // Nút A / Tròn
-  "KeyJ": "KeyU",       // Nút B / Vuông
-  "KeyI": "KeyO",       // Nút X / Tam giác
-  "KeyK": "KeyP",       // Nút Y / X
-  "Enter": "Digit7",    // Start
-  "ShiftRight": "Digit8"// Select
+  "KeyW": "KeyI",
+  "KeyS": "KeyK",
+  "KeyA": "KeyJ",
+  "KeyD": "KeyL",
+  "KeyU": "KeyY",
+  "KeyJ": "KeyU",
+  "KeyI": "KeyO",
+  "KeyK": "KeyP",
+  "Enter": "Digit7",
+  "ShiftRight": "Digit8"
 };
 
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// 1. TẠO PHÒNG ONLINE (DÀNH CHO HOST)
 const btnCreateRoom = document.getElementById("btn-create-room");
 if (btnCreateRoom) {
   btnCreateRoom.addEventListener("click", async () => {
     if (!currentUser) {
-      alert("Vui lòng đăng nhập tài khoản để tạo phòng Online!");
+      alert("Vui lòng đăng nhập để tạo phòng Online!");
       openAuthModal();
       return;
     }
-
     if (!currentGame.id) {
       alert("Hãy chọn và mở một tựa game trước khi tạo phòng!");
       return;
@@ -513,24 +667,22 @@ if (btnCreateRoom) {
 
     isHostPlayer = true;
     const roomId = generateRoomCode();
-    prompt("Mã phòng của bạn (Gửi mã này cho bạn bè):", roomId);
-
+    prompt("Mã phòng Online (Gửi mã này cho bạn bè):", roomId);
     initSupabaseSignaling(roomId, true);
   });
 }
 
-// 2. VÀO PHÒNG ONLINE (DÀNH CHO GUEST)
 const btnJoinRoom = document.getElementById("btn-join-room");
 const roomInput = document.getElementById("room-input");
 if (btnJoinRoom) {
   btnJoinRoom.addEventListener("click", async () => {
     if (!currentUser) {
-      alert("Vui lòng đăng nhập tài khoản để vào phòng Online!");
+      alert("Vui lòng đăng nhập để vào phòng Online!");
       openAuthModal();
       return;
     }
 
-    const roomId = roomInput.value.trim().toUpperCase();
+    const roomId = roomInput ? roomInput.value.trim().toUpperCase() : "";
     if (!roomId) {
       alert("Vui lòng nhập mã phòng!");
       return;
@@ -541,11 +693,9 @@ if (btnJoinRoom) {
   });
 }
 
-// 3. KHỞI TẠO BẮT TAY QUA SUPABASE REALTIME BROADCAST (0 IOPS, KHÔNG DÙNG DB)
 function initSupabaseSignaling(roomId, isHost) {
   if (roomChannel) supabaseClient.removeChannel(roomChannel);
 
-  // Kênh ảo ephemeral, không tốn dung lượng cơ sở dữ liệu
   roomChannel = supabaseClient.channel(`room_${roomId}`, {
     config: { broadcast: { self: false } }
   });
@@ -558,7 +708,6 @@ function initSupabaseSignaling(roomId, isHost) {
       if (status === "SUBSCRIBED") {
         setupPeerConnection(isHost);
         if (!isHost) {
-          // Guest phát tín hiệu đã vào phòng để Host tạo Offer
           roomChannel.send({
             type: "broadcast",
             event: "signal",
@@ -569,11 +718,9 @@ function initSupabaseSignaling(roomId, isHost) {
     });
 }
 
-// 4. THIẾT LẬP KẾT NỐI WEBRTC TRỰC TIẾP GIỮA 2 MÁY
 function setupPeerConnection(isHost) {
   peerConnection = new RTCPeerConnection(rtcConfig);
 
-  // Gửi ICE Candidate cho đối phương qua Supabase Broadcast
   peerConnection.onicecandidate = (e) => {
     if (e.candidate && roomChannel) {
       roomChannel.send({
@@ -585,23 +732,20 @@ function setupPeerConnection(isHost) {
   };
 
   if (isHost) {
-    // HOST: Bắt khung hình và âm thanh từ Canvas giả lập để stream sang Guest
     const canvas = document.querySelector("#game canvas");
     if (canvas) {
-      const stream = canvas.captureStream(60); // 60 FPS mượt mà
+      const stream = canvas.captureStream(60);
       stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
     }
 
-    // Mở DataChannel để nhận phím từ Guest
     dataChannel = peerConnection.createDataChannel("gamepad");
     dataChannel.onmessage = (e) => {
       const { type, code } = JSON.parse(e.data);
       injectPlayer2Input(type, code);
     };
 
-    dataChannel.onopen = () => alert("🎮 Bạn bè đã kết nối! Bắt đầu chơi chế độ 2 người.");
+    dataChannel.onopen = () => alert("🎮 Bạn bè đã kết nối! Bắt đầu chơi 2 người.");
   } else {
-    // GUEST: Nhận luồng video/audio từ Host và hiển thị lên màn hình
     peerConnection.ontrack = (e) => {
       renderRemoteVideo(e.streams[0]);
     };
@@ -609,17 +753,15 @@ function setupPeerConnection(isHost) {
     peerConnection.ondatachannel = (e) => {
       dataChannel = e.channel;
       dataChannel.onopen = () => {
-        alert("🎮 Đã kết nối với máy Host! Dùng phím W/A/S/D và U/I/O/J để điều khiển.");
+        alert("🎮 Đã kết nối với Host! Dùng W/A/S/D và U/I/O/J để điều khiển.");
         bindGuestInputListeners();
       };
     };
   }
 }
 
-// 5. XỬ LÝ TÍN HIỆU SDP & ICE
 async function handleIncomingSignal(data) {
   if (data.type === "guest_ready" && isHostPlayer) {
-    // Khi Guest sẵn sàng, Host tạo Offer kết nối
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     roomChannel.send({
@@ -628,7 +770,6 @@ async function handleIncomingSignal(data) {
       payload: { type: "offer", sdp: offer }
     });
   } else if (data.type === "offer" && !isHostPlayer) {
-    // Guest nhận Offer, tạo Answer phản hồi
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
@@ -638,10 +779,8 @@ async function handleIncomingSignal(data) {
       payload: { type: "answer", sdp: answer }
     });
   } else if (data.type === "answer" && isHostPlayer) {
-    // Host nhận Answer và khóa chu kỳ bắt tay
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
   } else if (data.type === "candidate" && peerConnection) {
-    // Bổ sung thông tin tuyến mạng
     try {
       await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
     } catch (err) {
@@ -650,7 +789,6 @@ async function handleIncomingSignal(data) {
   }
 }
 
-// 6. GUEST: HIỂN THỊ MÀN HÌNH CHƠI TỪ HOST
 function renderRemoteVideo(mediaStream) {
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
@@ -666,7 +804,6 @@ function renderRemoteVideo(mediaStream) {
   video.srcObject = mediaStream;
 }
 
-// 7. GUEST: BẮT PHÍM BẤM VÀ TRUYỀN SANG HOST QUA WEBRTC DATACHANNEL
 function bindGuestInputListeners() {
   const sendKey = (type, code) => {
     if (dataChannel && dataChannel.readyState === "open") {
@@ -687,246 +824,321 @@ function bindGuestInputListeners() {
   });
 }
 
-// 8. HOST: MÔ PHỎNG PHÍM PLAYER 2 ĐƯA VÀO GIẢ LẬP
 function injectPlayer2Input(type, incomingCode) {
   const targetCode = PLAYER2_KEYMAP[incomingCode] || incomingCode;
-  
-  // Phát trực tiếp sự kiện phím vào Canvas của EmulatorJS
   const event = new KeyboardEvent(type, {
     code: targetCode,
     bubbles: true,
     cancelable: true
   });
-
   const canvas = document.querySelector("#game canvas") || window;
   canvas.dispatchEvent(event);
 }
+
 // =================================================================
-// 8. KHỞI CHẠY HỆ THỐNG
+// 8. BÀN PHÍM ẢO (VIRTUAL GAMEPAD) & TÙY CHỈNH NEO GÓC
 // =================================================================
-window.addEventListener("DOMContentLoaded", () => {
-  initAuth();
-  loadGamesFromSupabase();
-});
-let isSignUpMode = false;
+const KEY_MAP_CONFIG = {
+  "ArrowUp":    { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
+  "ArrowDown":  { key: "ArrowDown",  code: "ArrowDown",  keyCode: 40 },
+  "ArrowLeft":  { key: "ArrowLeft",  code: "ArrowLeft",  keyCode: 37 },
+  "ArrowRight": { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  "KeyZ":       { key: "z",          code: "KeyZ",       keyCode: 90 },
+  "KeyX":       { key: "x",          code: "KeyX",       keyCode: 88 },
+  "KeyA":       { key: "a",          code: "KeyA",       keyCode: 65 },
+  "KeyS":       { key: "s",          code: "KeyS",       keyCode: 83 },
+  "KeyQ":       { key: "q",          code: "KeyQ",       keyCode: 81 },
+  "KeyE":       { key: "e",          code: "KeyE",       keyCode: 69 },
+  "Enter":      { key: "Enter",      code: "Enter",      keyCode: 13 },
+  "ShiftRight": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
+};
 
-function openAuthModal() {
-  const modal = document.getElementById("auth-modal");
-  if (modal) modal.style.display = "flex";
-}
+let isConfigMode = false;
+let selectedElementId = "all";
+let padLayoutSettings = {};
 
-function closeAuthModal() {
-  const modal = document.getElementById("auth-modal");
-  if (modal) modal.style.display = "none";
-}
+function initVirtualGamepad() {
+  loadGamepadConfig();
 
-function toggleAuthMode() {
-  isSignUpMode = !isSignUpMode;
-  const title = document.getElementById("auth-modal-title");
-  const submitBtn = document.getElementById("btn-submit-auth");
-  const toggleBtn = document.getElementById("btn-toggle-auth");
-
-  if (isSignUpMode) {
-    title.innerText = "Đăng Ký Tài Khoản";
-    submitBtn.innerText = "Đăng ký";
-    submitBtn.setAttribute("onclick", "handleEmailAuth('signup')");
-    toggleBtn.innerText = "Đã có tài khoản? Đăng nhập";
-  } else {
-    title.innerText = "Đăng Nhập Game Thủ";
-    submitBtn.innerText = "Đăng nhập";
-    submitBtn.setAttribute("onclick", "handleEmailAuth('login')");
-    toggleBtn.innerText = "Chưa có tài khoản? Đăng ký ngay";
-  }
-}
-
-async function handleEmailAuth(mode) {
-  const email = document.getElementById("auth-email").value.trim();
-  const password = document.getElementById("auth-password").value.trim();
-
-  if (!email || !password) {
-    alert("Vui lòng điền đầy đủ email và mật khẩu.");
-    return;
-  }
-
-  if (mode === "signup") {
-    const { error } = await supabaseClient.auth.signUp({ email, password });
-    if (error) return alert("Lỗi đăng ký: " + error.message);
-    alert("Đăng ký thành công! Bạn có thể đăng nhập ngay.");
-    toggleAuthMode();
-  } else {
-    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if (error) return alert("Lỗi đăng nhập: " + error.message);
-    closeAuthModal();
-  }
-}
-
-// Cập nhật lại nút hiển thị khi chưa đăng nhập
-function renderAuthUI() {
-  const authContainer = document.getElementById("auth-container");
-  if (!authContainer) return;
-
-  if (currentUser) {
-    const displayName = (userProfile && userProfile.username) 
-      ? userProfile.username 
-      : currentUser.email.split("@")[0];
-
-    authContainer.innerHTML = `
-      <div class="user-badge">
-        <span style="font-size:0.85rem; font-weight:600; color:var(--accent-color);">🎮 ${displayName}</span>
-        <button class="btn-edit" title="Đổi Nickname" onclick="openProfileModal('${displayName}')">✏️</button>
-      </div>
-      <button class="btn btn-secondary" onclick="logout()">Đăng xuất</button>
-    `;
-  } else {
-    authContainer.innerHTML = `
-      <button class="btn btn-primary" onclick="openAuthModal()">Đăng nhập / Đăng ký</button>
-    `;
-  }
-}
-// ================= BỔ SUNG HÀM ĐĂNG NHẬP GOOGLE & ĐĂNG XUẤT =================
-async function loginWithGoogle() {
-  if (!supabaseClient) {
-    alert("Chưa kết nối được với Supabase. Hãy kiểm tra lại URL và Key!");
-    return;
-  }
-
-  try {
-    const { error } = await supabaseClient.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: window.location.origin // Tự động chuyển hướng về lại trang web sau khi đăng nhập
-      }
-    });
-
-    if (error) throw error;
-  } catch (err) {
-    console.error("Lỗi đăng nhập Google:", err);
-    alert("Lỗi đăng nhập Google: " + err.message);
-  }
-}
-// Hàm tải dữ liệu kèm theo dõi tiến độ % chi tiết
-async function fetchWithProgress(url, onProgress) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Lỗi tải (${response.status}): ${response.statusText}`);
-  }
-
-  // Lấy tổng dung lượng file từ Header (nếu server có cung cấp)
-  const contentLength = response.headers.get("content-length");
-  const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-
-  const reader = response.body.getReader();
-  let receivedBytes = 0;
-  const chunks = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    chunks.push(value);
-    receivedBytes += value.length;
-
-    // Bắn sự kiện cập nhật giao diện
-    if (onProgress) {
-      onProgress(receivedBytes, totalBytes);
+  document.getElementById("btn-toggle-pad")?.addEventListener("click", () => {
+    const overlay = document.getElementById("virtual-gamepad");
+    if (overlay) {
+      overlay.style.display = (overlay.style.display === "none") ? "block" : "none";
     }
-  }
+  });
 
-  // Ghép các mảng dữ liệu lại thành 1 file Blob hoàn chỉnh
-  return new Blob(chunks);
-}
-
-// Nâng cấp hàm mở game: Có hiển thị thanh phần trăm tải
-async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
-  currentGame = { id: gameId, title: gameTitle, core: core, isLocal: false };
-  const container = document.getElementById("game-container");
-  const placeholder = document.getElementById("game-placeholder");
-  if (placeholder) placeholder.style.display = "none";
-
-  try {
-    let romBlob = null;
-
-    // 1. Kiểm tra cache trong IndexedDB
-    if (window.idbKeyval) {
-      const cached = await window.idbKeyval.get(`rom_${gameId}`);
-      // Tương thích cả bản lưu cũ (Blob) và bản lưu mới (Object có title)
-      if (cached instanceof Blob) {
-        romBlob = cached;
-      } else if (cached && cached.blob) {
-        romBlob = cached.blob;
-      }
-    }
-
-    if (romBlob) {
-      console.log("⚡ Đã có trong máy, nạp ngay lập tức!");
-      container.innerHTML = `
-        <div class="loading-box">
-          <div class="loading-title">⚡ Đang nạp ${gameTitle} từ bộ nhớ máy...</div>
-        </div>
-      `;
+  document.getElementById("btn-fullscreen")?.addEventListener("click", () => {
+    const container = document.getElementById("game-container");
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch(err => alert("Không thể bật toàn màn hình: " + err.message));
     } else {
-      console.log("🌐 Đang tải game từ internet...");
-      container.innerHTML = `
-        <div class="loading-box">
-          <div class="loading-title">Đang tải: <span style="color:var(--accent-cyan);">${gameTitle}</span></div>
-          <div class="progress-track">
-            <div class="progress-fill" id="download-progress-bar"></div>
-          </div>
-          <div class="loading-stats">
-            <span id="download-size">Đang kết nối...</span>
-            <span class="loading-percent" id="download-percent">0%</span>
-          </div>
-        </div>
-      `;
-
-      const progressBar = document.getElementById("download-progress-bar");
-      const sizeText = document.getElementById("download-size");
-      const percentText = document.getElementById("download-percent");
-
-      romBlob = await fetchWithProgress(romUrl, (received, total) => {
-        const receivedMB = (received / (1024 * 1024)).toFixed(1);
-        if (total > 0) {
-          const totalMB = (total / (1024 * 1024)).toFixed(1);
-          const percent = Math.min(100, Math.round((received / total) * 100));
-          progressBar.style.width = `${percent}%`;
-          percentText.innerText = `${percent}%`;
-          sizeText.innerText = `${receivedMB} MB / ${totalMB} MB`;
-        } else {
-          sizeText.innerText = `Đã nạp: ${receivedMB} MB`;
-          percentText.innerText = "Đang tải...";
-        }
-      });
-
-      // LƯU CẢ FILE BLOB LẪN TÊN GAME VÀO INDEXEDDB
-      if (window.idbKeyval) {
-        await window.idbKeyval.set(`rom_${gameId}`, {
-          blob: romBlob,
-          title: gameTitle,
-          core: core.toUpperCase(),
-          savedAt: new Date().toLocaleDateString("vi-VN")
-        });
-        console.log("💾 Đã lưu ROM và Metadata vào IndexedDB.");
-      }
+      document.exitFullscreen();
     }
+  });
 
-    const blobUrl = URL.createObjectURL(romBlob);
-    startEmulator(core, blobUrl, gameTitle);
-    recordPlayHistory(gameId);
+  document.getElementById("btn-config-pad")?.addEventListener("click", () => {
+    toggleGamepadConfig(!isConfigMode);
+  });
 
-  } catch (error) {
-    console.error("Lỗi khi nạp game:", error);
-    container.innerHTML = `
-      <div style="color:#ff5555; text-align:center; padding: 2rem;">
-        <p>❌ Không thể tải trò chơi!</p>
-        <small>${error.message}</small>
-      </div>
-    `;
+  document.getElementById("slider-pad-scale")?.addEventListener("input", (e) => {
+    const val = e.target.value / 100;
+    document.getElementById("val-pad-scale").innerText = `${e.target.value}%`;
+    updateElementStyle(selectedElementId, "scale", val);
+  });
+
+  document.getElementById("slider-pad-opacity")?.addEventListener("input", (e) => {
+    const val = e.target.value / 100;
+    document.getElementById("val-pad-opacity").innerText = `${e.target.value}%`;
+    updateElementStyle(selectedElementId, "opacity", val);
+  });
+
+  document.querySelectorAll(".pad-element").forEach(el => setupSmartDraggableElement(el));
+  setupButtonInputEvents();
+}
+
+function dispatchGameKey(type, keyCodeIdentifier) {
+  if (typeof dataChannel !== "undefined" && dataChannel && dataChannel.readyState === "open") {
+    dataChannel.send(JSON.stringify({ type, code: keyCodeIdentifier }));
+    return;
+  }
+
+  const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
+  if (!keyInfo) return;
+
+  const event = new KeyboardEvent(type, {
+    key: keyInfo.key,
+    code: keyInfo.code,
+    keyCode: keyInfo.keyCode,
+    which: keyInfo.keyCode,
+    bubbles: true,
+    cancelable: true,
+    composed: true
+  });
+
+  Object.defineProperty(event, "keyCode", { get: () => keyInfo.keyCode });
+  Object.defineProperty(event, "which", { get: () => keyInfo.keyCode });
+
+  const canvas = document.querySelector("#game canvas") || document.getElementById("game");
+  if (canvas) canvas.dispatchEvent(event);
+  document.dispatchEvent(event);
+  window.dispatchEvent(event);
+}
+
+function setupButtonInputEvents() {
+  document.querySelectorAll(".v-btn").forEach(btn => {
+    const key = btn.getAttribute("data-key");
+
+    const pressHandler = (e) => {
+      if (isConfigMode) return;
+      e.preventDefault();
+      btn.classList.add("pressed");
+      if (navigator.vibrate) navigator.vibrate(15);
+      dispatchGameKey("keydown", key);
+    };
+
+    const releaseHandler = (e) => {
+      if (isConfigMode) return;
+      e.preventDefault();
+      btn.classList.remove("pressed");
+      dispatchGameKey("keyup", key);
+    };
+
+    btn.addEventListener("touchstart", pressHandler, { passive: false });
+    btn.addEventListener("touchend", releaseHandler, { passive: false });
+    btn.addEventListener("touchcancel", releaseHandler, { passive: false });
+    btn.addEventListener("mousedown", pressHandler);
+    btn.addEventListener("mouseup", releaseHandler);
+  });
+}
+
+function setupSmartDraggableElement(el) {
+  let startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+  let isDragging = false;
+
+  const onStart = (e) => {
+    if (!isConfigMode) return;
+    selectPadElement(el.id);
+
+    const point = e.touches ? e.touches[0] : e;
+    startX = point.clientX;
+    startY = point.clientY;
+
+    const rect = el.getBoundingClientRect();
+    const parentRect = el.offsetParent.getBoundingClientRect();
+
+    initialLeft = rect.left - parentRect.left;
+    initialTop = rect.top - parentRect.top;
+    isDragging = true;
+
+    const onMove = (mvEvent) => {
+      if (!isDragging) return;
+      const movePoint = mvEvent.touches ? mvEvent.touches[0] : mvEvent;
+      const curLeft = initialLeft + (movePoint.clientX - startX);
+      const curTop = initialTop + (movePoint.clientY - startY);
+      const parentW = el.offsetParent.clientWidth;
+      const parentH = el.offsetParent.clientHeight;
+
+      if (curTop + el.offsetHeight / 2 > parentH / 2) {
+        const bottomVal = parentH - (curTop + el.offsetHeight);
+        el.style.top = "auto";
+        el.style.bottom = `${bottomVal}px`;
+      } else {
+        el.style.bottom = "auto";
+        el.style.top = `${curTop}px`;
+      }
+
+      if (curLeft + el.offsetWidth / 2 > parentW / 2) {
+        const rightVal = parentW - (curLeft + el.offsetWidth);
+        el.style.left = "auto";
+        el.style.right = `${rightVal}px`;
+      } else {
+        el.style.right = "auto";
+        el.style.left = `${curLeft}px`;
+      }
+    };
+
+    const onEnd = () => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      if (!padLayoutSettings[el.id]) padLayoutSettings[el.id] = {};
+      padLayoutSettings[el.id].top = el.style.top;
+      padLayoutSettings[el.id].bottom = el.style.bottom;
+      padLayoutSettings[el.id].left = el.style.left;
+      padLayoutSettings[el.id].right = el.style.right;
+
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+  };
+
+  el.addEventListener("mousedown", onStart);
+  el.addEventListener("touchstart", onStart, { passive: false });
+}
+
+function toggleGamepadConfig(active) {
+  isConfigMode = active;
+  const configBar = document.getElementById("gamepad-config-bar");
+  const overlay = document.getElementById("virtual-gamepad");
+
+  if (configBar) configBar.style.display = active ? "flex" : "none";
+  if (overlay) overlay.classList.toggle("is-editing", active);
+
+  if (!active) {
+    saveGamepadConfig();
+    clearSelection();
+  } else {
+    selectPadElement("all");
   }
 }
-// =================================================================
-// QUẢN LÝ ACCOUNT DASHBOARD (LOCAL ROMS & CLOUD SAVES)
-// =================================================================
 
+function selectPadElement(elementId) {
+  selectedElementId = elementId;
+  const targetLabel = document.getElementById("cfg-target-name");
+  const sliderScale = document.getElementById("slider-pad-scale");
+  const sliderOpacity = document.getElementById("slider-pad-opacity");
+
+  document.querySelectorAll(".pad-element").forEach(el => el.classList.remove("is-selected"));
+
+  if (elementId === "all") {
+    if (targetLabel) targetLabel.innerText = "Toàn bộ phím";
+    const curScale = padLayoutSettings["all"]?.scale || 1.0;
+    const curOpacity = padLayoutSettings["all"]?.opacity || 0.8;
+    if (sliderScale) sliderScale.value = curScale * 100;
+    if (sliderOpacity) sliderOpacity.value = curOpacity * 100;
+    document.getElementById("val-pad-scale").innerText = `${Math.round(curScale * 100)}%`;
+    document.getElementById("val-pad-opacity").innerText = `${Math.round(curOpacity * 100)}%`;
+  } else {
+    const targetEl = document.getElementById(elementId);
+    if (targetEl) {
+      targetEl.classList.add("is-selected");
+      if (targetLabel) targetLabel.innerText = targetEl.getAttribute("data-name") || elementId;
+
+      const itemConf = padLayoutSettings[elementId] || {};
+      const scale = itemConf.scale || padLayoutSettings["all"]?.scale || 1.0;
+      const opacity = itemConf.opacity || padLayoutSettings["all"]?.opacity || 0.8;
+
+      if (sliderScale) sliderScale.value = scale * 100;
+      if (sliderOpacity) sliderOpacity.value = opacity * 100;
+      document.getElementById("val-pad-scale").innerText = `${Math.round(scale * 100)}%`;
+      document.getElementById("val-pad-opacity").innerText = `${Math.round(opacity * 100)}%`;
+    }
+  }
+}
+
+function clearSelection() {
+  document.querySelectorAll(".pad-element").forEach(el => el.classList.remove("is-selected"));
+}
+
+function updateElementStyle(id, prop, value) {
+  if (id === "all") {
+    if (!padLayoutSettings["all"]) padLayoutSettings["all"] = {};
+    padLayoutSettings["all"][prop] = value;
+    document.querySelectorAll(".pad-element").forEach(el => applySingleElementStyle(el.id));
+  } else {
+    if (!padLayoutSettings[id]) padLayoutSettings[id] = {};
+    padLayoutSettings[id][prop] = value;
+    applySingleElementStyle(id);
+  }
+}
+
+function applySingleElementStyle(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const itemConf = padLayoutSettings[id] || {};
+  const globalConf = padLayoutSettings["all"] || { scale: 1.0, opacity: 0.8 };
+
+  const scale = itemConf.scale !== undefined ? itemConf.scale : globalConf.scale;
+  const opacity = itemConf.opacity !== undefined ? itemConf.opacity : globalConf.opacity;
+
+  el.style.transform = `scale(${scale})`;
+  el.style.opacity = opacity;
+
+  if (itemConf.top) el.style.top = itemConf.top;
+  if (itemConf.bottom) el.style.bottom = itemConf.bottom;
+  if (itemConf.left) el.style.left = itemConf.left;
+  if (itemConf.right) el.style.right = itemConf.right;
+}
+
+function saveGamepadConfig() {
+  localStorage.setItem("retrocloud_custom_layout_v3", JSON.stringify(padLayoutSettings));
+}
+
+function loadGamepadConfig() {
+  localStorage.removeItem("retrocloud_custom_layout_v2");
+  localStorage.removeItem("retrocloud_pad_config");
+
+  const saved = localStorage.getItem("retrocloud_custom_layout_v3");
+  if (saved) {
+    try {
+      padLayoutSettings = JSON.parse(saved);
+      document.querySelectorAll(".pad-element").forEach(el => applySingleElementStyle(el.id));
+    } catch (e) {
+      console.warn("Lỗi load layout:", e);
+    }
+  }
+}
+
+function resetGamepadLayout() {
+  localStorage.removeItem("retrocloud_custom_layout_v3");
+  padLayoutSettings = {};
+  document.querySelectorAll(".pad-element").forEach(el => {
+    el.removeAttribute("style");
+  });
+  toggleGamepadConfig(false);
+}
+
+// =================================================================
+// 9. ACCOUNT DASHBOARD (LOCAL ROMS & CLOUD SAVES)
+// =================================================================
 function openAccountModal() {
   const modal = document.getElementById("account-modal");
   if (!modal) return;
@@ -946,7 +1158,6 @@ function closeAccountModal() {
 }
 
 function switchAccountTab(tabName) {
-  // Đổi active button
   document.querySelectorAll(".tab-btn").forEach((btn, idx) => {
     btn.classList.toggle("active", 
       (tabName === 'profile' && idx === 0) ||
@@ -955,18 +1166,18 @@ function switchAccountTab(tabName) {
     );
   });
 
-  // Đổi active content
-  document.getElementById("tab-profile").classList.toggle("active", tabName === "profile");
-  document.getElementById("tab-roms").classList.toggle("active", tabName === "roms");
-  document.getElementById("tab-saves").classList.toggle("active", tabName === "saves");
+  document.getElementById("tab-profile")?.classList.toggle("active", tabName === "profile");
+  document.getElementById("tab-roms")?.classList.toggle("active", tabName === "roms");
+  document.getElementById("tab-saves")?.classList.toggle("active", tabName === "saves");
 
   if (tabName === "roms") renderLocalRoms();
   if (tabName === "saves") renderCloudSaves();
 }
 
-// 1. Quét & hiển thị ROM trong IndexedDB
 async function renderLocalRoms() {
   const listContainer = document.getElementById("local-roms-list");
+  if (!listContainer) return;
+
   if (!window.idbKeyval) {
     listContainer.innerHTML = `<p class="empty-state">Trình duyệt không hỗ trợ IndexedDB.</p>`;
     return;
@@ -990,10 +1201,9 @@ async function renderLocalRoms() {
       let systemTag = "ROM";
       let sizeMB = "0";
 
-      // Kiểm tra cấu trúc dữ liệu lưu trong IndexedDB
       if (data instanceof Blob) {
         sizeMB = (data.size / (1024 * 1024)).toFixed(1);
-        gameTitle = key.replace("rom_", ""); // Bản lưu cũ chưa có metadata
+        gameTitle = key.replace("rom_", "");
       } else if (data && data.blob) {
         sizeMB = (data.blob.size / (1024 * 1024)).toFixed(1);
         gameTitle = data.title || "Game không tên";
@@ -1016,17 +1226,16 @@ async function renderLocalRoms() {
   }
 }
 
-// Xóa ROM khỏi IndexedDB
 async function deleteLocalRom(key) {
   if (!confirm("Bạn có chắc chắn muốn xóa ROM này khỏi bộ nhớ máy? Lần sau chơi sẽ cần tải lại.")) return;
-  
   await window.idbKeyval.del(key);
   renderLocalRoms();
 }
 
-// 2. Lấy & hiển thị file Save trên Supabase
 async function renderCloudSaves() {
   const listContainer = document.getElementById("cloud-saves-list");
+  if (!listContainer) return;
+
   if (!currentUser) {
     listContainer.innerHTML = `<p class="empty-state">Vui lòng đăng nhập để xem các file save đám mây.</p>`;
     return;
@@ -1070,16 +1279,13 @@ async function renderCloudSaves() {
   }
 }
 
-// Xóa Save khỏi Storage bucket 'SaveGame' và Database table 'user_saves'
 async function deleteCloudSave(saveId, filePath) {
   if (!confirm("Bạn có chắc chắn muốn xóa bản lưu này trên đám mây? Dữ liệu không thể phục hồi!")) return;
 
   try {
-    // 1. Xóa file trong bucket SaveGame
     const { error: storageErr } = await supabaseClient.storage.from("SaveGame").remove([filePath]);
     if (storageErr) console.warn("Lỗi xóa file storage:", storageErr.message);
 
-    // 2. Xóa bản ghi trong database
     const { error: dbErr } = await supabaseClient.from("user_saves").delete().eq("id", saveId);
     if (dbErr) throw dbErr;
 
@@ -1089,48 +1295,29 @@ async function deleteCloudSave(saveId, filePath) {
   }
 }
 
-// Cập nhật lại nút mở Modal trên thanh Header
-function renderAuthUI() {
-  const authContainer = document.getElementById("auth-container");
-  if (!authContainer) return;
-
-  if (currentUser) {
-    const displayName = (userProfile && userProfile.username) 
-      ? userProfile.username 
-      : currentUser.email.split("@")[0];
-
-    authContainer.innerHTML = `
-      <div class="user-badge" style="cursor:pointer;" onclick="openAccountModal()" title="Mở Quản Lý Tài Khoản">
-        <span style="font-size:0.85rem; font-weight:600; color:var(--accent-cyan);">🎮 ${displayName}</span>
-        <button class="btn-edit">⚙️</button>
-      </div>
-      <button class="btn btn-secondary" onclick="logout()">Đăng xuất</button>
-    `;
-  } else {
-    authContainer.innerHTML = `
-      <button class="btn btn-primary" onclick="openAuthModal()">Đăng nhập / Đăng ký</button>
-    `;
-  }
-}
-
-// Gắn hàm vào window để gọi từ HTML
+// =================================================================
+// 10. GẮN CÁC HÀM TOÀN CỤC & KHỞI CHẠY HỆ THỐNG
+// =================================================================
+window.launchGameWithCache = launchGameWithCache;
+window.saveToCloud = saveToCloud;
+window.loadFromCloud = loadFromCloud;
+window.loginWithGoogle = loginWithGoogle;
+window.logout = logout;
+window.openAuthModal = openAuthModal;
+window.closeAuthModal = closeAuthModal;
+window.toggleAuthMode = toggleAuthMode;
+window.handleEmailAuth = handleEmailAuth;
+window.saveUsername = saveUsername;
 window.openAccountModal = openAccountModal;
 window.closeAccountModal = closeAccountModal;
 window.switchAccountTab = switchAccountTab;
 window.deleteLocalRom = deleteLocalRom;
 window.deleteCloudSave = deleteCloudSave;
-async function logout() {
-  if (!supabaseClient) return;
-  
-  const { error } = await supabaseClient.auth.signOut();
-  if (error) {
-    alert("Lỗi khi đăng xuất: " + error.message);
-  } else {
-    // Làm mới trang để xóa sạch trạng thái phiên đăng nhập cũ
-    window.location.reload();
-  }
-}
+window.resetGamepadLayout = resetGamepadLayout;
+window.toggleGamepadConfig = toggleGamepadConfig;
 
-// Gắn trực tiếp vào window để đảm bảo nút bấm HTML luôn gọi được
-window.loginWithGoogle = loginWithGoogle;
-window.logout = logout;
+window.addEventListener("DOMContentLoaded", () => {
+  initAuth();
+  loadGamesFromSupabase();
+  initVirtualGamepad();
+});
