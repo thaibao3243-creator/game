@@ -272,7 +272,7 @@ async function saveUsername() {
 }
 
 // =================================================================
-// 6. CLOUD SAVE & LOAD (GIỚI HẠN 3 SLOT)
+// 6. CLOUD SAVE & LOAD (ĐÃ SỬA CHUẨN API EMULATORJS)
 // =================================================================
 async function saveToCloud(slotNumber) {
   if (!currentUser) {
@@ -283,24 +283,32 @@ async function saveToCloud(slotNumber) {
     alert("Chưa có game nào đang chạy để lưu.");
     return;
   }
-  if (!window.EJS_emulator || !window.EJS_emulator.gameManager) {
-    alert("Trình giả lập chưa sẵn sàng hoặc không hỗ trợ trích xuất file save.");
+  
+  const gm = window.EJS_emulator?.gameManager;
+  if (!gm) {
+    alert("Trình giả lập chưa sẵn sàng.");
     return;
   }
 
   try {
-    // 1. Trích xuất file save (.sav) từ EmulatorJS
-    const saveBinary = window.EJS_emulator.gameManager.getSaveFile();
+    // 1. Lấy dữ liệu save từ EmulatorJS (hỗ trợ cả getSave và getState)
+    let saveBinary = null;
+    if (typeof gm.getSave === "function") {
+      saveBinary = await gm.getSave();
+    } else if (typeof gm.getState === "function") {
+      saveBinary = await gm.getState();
+    }
+
     if (!saveBinary || saveBinary.length === 0) {
-      alert("Chưa tìm thấy dữ liệu lưu trong game (Hãy lưu game trong menu trò chơi trước).");
+      alert("Không tìm thấy dữ liệu lưu! Hãy chắc chắn bạn đã vào menu trong game để bấm SAVE trước.");
       return;
     }
 
     const filePath = `${currentUser.id}/${currentGame.id}_slot${slotNumber}.sav`;
 
-    // 2. Upload file nhị phân lên bucket 'saves' (Private)
+    // 2. Upload file nhị phân lên bucket 'SaveGame'
     const { error: uploadError } = await supabaseClient.storage
-      .from("saves")
+      .from("SaveGame")
       .upload(filePath, saveBinary, {
         contentType: "application/octet-stream",
         upsert: true
@@ -308,7 +316,7 @@ async function saveToCloud(slotNumber) {
 
     if (uploadError) throw uploadError;
 
-    // 3. Cập nhật thông tin vào bảng user_saves
+    // 3. Cập nhật vào bảng user_saves
     const { error: dbError } = await supabaseClient
       .from("user_saves")
       .upsert({
@@ -322,7 +330,7 @@ async function saveToCloud(slotNumber) {
 
     if (dbError) throw dbError;
 
-    alert(`Đã lưu tiến trình thành công vào Đám mây [Slot ${slotNumber}]!`);
+    alert(`✅ Đã lưu thành công vào Đám Mây [Slot ${slotNumber}]!`);
     updateSaveSlotUI();
 
   } catch (err) {
@@ -340,7 +348,9 @@ async function loadFromCloud(slotNumber) {
     alert("Hãy mở game trước khi tải file lưu.");
     return;
   }
-  if (!window.EJS_emulator || !window.EJS_emulator.gameManager) {
+
+  const gm = window.EJS_emulator?.gameManager;
+  if (!gm) {
     alert("Trình giả lập chưa sẵn sàng.");
     return;
   }
@@ -348,23 +358,35 @@ async function loadFromCloud(slotNumber) {
   try {
     const filePath = `${currentUser.id}/${currentGame.id}_slot${slotNumber}.sav`;
 
-    // 1. Tải file từ Supabase Storage
-    const { data, error } = await supabaseClient.storage.from("saves").download(filePath);
-    if (error) throw new Error("Không tìm thấy file lưu ở Slot này.");
+    // 1. Tải file từ Supabase Storage bucket 'SaveGame'
+    const { data, error } = await supabaseClient.storage.from("SaveGame").download(filePath);
+    if (error) throw new Error("Chưa có bản lưu nào ở Slot này.");
 
-    // 2. Nạp mảng byte vào EmulatorJS
+    // 2. Chuyển dữ liệu sang mảng Byte (Uint8Array)
     const arrayBuffer = await data.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    
-    window.EJS_emulator.gameManager.loadSaveFile(uint8Array);
-    alert(`Đã nạp file save [Slot ${slotNumber}]! Hãy reset hoặc tiếp tục chơi.`);
+
+    // 3. Nạp vào EmulatorJS bằng hàm loadSave chuẩn
+    if (typeof gm.loadSave === "function") {
+      gm.loadSave(uint8Array);
+    } else if (typeof gm.loadState === "function") {
+      gm.loadState(uint8Array);
+    } else {
+      throw new Error("Phiên bản EmulatorJS này không hỗ trợ API nạp save trực tiếp.");
+    }
+
+    // Khởi động lại core để nạp dữ liệu save mới
+    if (typeof gm.restart === "function") {
+      gm.restart();
+    }
+
+    alert(`✅ Đã nạp dữ liệu [Slot ${slotNumber}] thành công!`);
 
   } catch (err) {
     console.error("Lỗi tải save:", err);
     alert("Tải file lưu thất bại: " + err.message);
   }
 }
-
 async function updateSaveSlotUI() {
   const savePanel = document.getElementById("cloud-save-panel");
   if (!savePanel) return;
