@@ -2,10 +2,60 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Retro Game Web</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RetroCloud - Web Giả Lập Trực Tuyến</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Supabase JS Client từ CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
-<body style="background:#111; color:#fff; text-align:center; padding-top:50px; font-family:sans-serif;">
-  <h1>Web Game Giả Lập Online</h1>
-  <p>Deploy thành công trên Vercel!</p>
+<body>
+  <header>
+    <div class="logo">🎮 RetroCloud</div>
+    <div class="room-panel">
+      <input type="text" id="room-input" placeholder="Nhập mã phòng...">
+      <button id="btn-join-room" class="btn btn-secondary">Vào phòng</button>
+      <button id="btn-create-room" class="btn btn-primary">Tạo phòng Online</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Khu vực hiển thị màn hình game giả lập -->
+    <section id="emulator-section">
+      <div id="game-container">
+        <div id="game-placeholder">
+          <p>Chọn một game bên dưới hoặc kéo thả file ROM từ máy tính vào đây</p>
+        </div>
+        <div id="game"></div>
+      </div>
+    </section>
+
+    <!-- Khu vực tự tải ROM từ máy (cho PS1, GBA dung lượng lớn) -->
+    <section class="upload-section">
+      <div class="drop-zone" id="drop-zone">
+        <span>📁 Kéo thả file ROM (.gba, .nes, .iso, .bin, .chd) vào đây</span>
+        <input type="file" id="file-input" accept=".gba,.nes,.snes,.iso,.bin,.chd,.zip" hidden>
+        <button class="btn btn-outline" onclick="document.getElementById('file-input').click()">Chọn file từ máy</button>
+      </div>
+      <div class="system-select">
+        <label for="core-selector">Chọn hệ máy cho file tự nạp:</label>
+        <select id="core-selector">
+          <option value="gba">Game Boy Advance (GBA)</option>
+          <option value="psx">PlayStation 1 (PS1)</option>
+          <option value="nes">NES (4 nút)</option>
+          <option value="snes">SNES (Đĩa mềm)</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- Danh sách game có sẵn từ Supabase -->
+    <section class="library-section">
+      <h2>Thư viện Game sẵn có</h2>
+      <div class="game-grid" id="game-grid">
+        <p class="loading">Đang tải danh sách game...</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
 </body>
 </html>
