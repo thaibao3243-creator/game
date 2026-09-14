@@ -1,4 +1,25 @@
 // =================================================================
+// 0. HOOK ÂM THANH TOÀN CỤC (CAPTURE AUDIO CHO WEBRTC NETPLAY)
+// =================================================================
+let netplayAudioStream = null;
+const OrigAudioContext = window.AudioContext || window.webkitAudioContext;
+if (OrigAudioContext) {
+  const origConnect = AudioNode.prototype.connect;
+  AudioNode.prototype.connect = function(destination, ...args) {
+    try {
+      if (destination instanceof AudioDestinationNode && this.context) {
+        if (!this.context.__netplayDest) {
+          this.context.__netplayDest = this.context.createMediaStreamDestination();
+          netplayAudioStream = this.context.__netplayDest.stream;
+        }
+        origConnect.call(this, this.context.__netplayDest);
+      }
+    } catch (e) {}
+    return origConnect.call(this, destination, ...args);
+  };
+}
+
+// =================================================================
 // 1. SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
 // =================================================================
 const SUPABASE_URL = "https://kmypjbgjvkkbmyaomhrt.supabase.co";
@@ -11,7 +32,7 @@ let userProfile = null;
 let currentGame = { id: null, title: null, core: null, isLocal: false };
 
 // =================================================================
-// 2. KHỞI CHẠY EMULATORJS & TẢI LUỒNG TIẾN TRÌNH
+// 2. KHỞI CHẠY EMULATORJS & NẠP STREAM TIẾN TRÌNH
 // =================================================================
 async function fetchWithProgress(url, onProgress) {
   const response = await fetch(url);
@@ -122,7 +143,7 @@ async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
   }
 }
 
-function startEmulator(core, romSource, gameTitle = "Retro Game", netplayOptions = null) {
+function startEmulator(core, romSource, gameTitle = "Retro Game") {
   const placeholder = document.getElementById("game-placeholder");
   const loader = document.getElementById("game-loader");
   const cloudBar = document.getElementById("cloud-save-panel");
@@ -140,7 +161,6 @@ function startEmulator(core, romSource, gameTitle = "Retro Game", netplayOptions
     gameDiv.innerHTML = "";
   }
 
-  // 1. Cấu hình cơ bản
   window.EJS_player = "#game";
   window.EJS_core = core;
   window.EJS_gameName = gameTitle;
@@ -148,17 +168,6 @@ function startEmulator(core, romSource, gameTitle = "Retro Game", netplayOptions
   window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/";
   window.EJS_startOnLoaded = true;
 
-  // 2. Kích hoạt Native Netplay nếu có cấu hình phòng
-  if (netplayOptions && netplayOptions.enabled) {
-    window.EJS_netplay = true;
-    window.EJS_netplayUrl = "wss://netplay.emulatorjs.org"; // Relay server công cộng mặc định của EmulatorJS
-    window.EJS_netplayRoom = netplayOptions.roomId;
-    window.EJS_netplayNickname = netplayOptions.nickname || "Player";
-  } else {
-    window.EJS_netplay = false;
-  }
-
-  // 3. Tắt nút lưu đè mặc định
   const noSaveButtons = {
     playPause: true, restart: true, mute: true, volume: true, settings: true,
     fullscreen: true, gamepad: true, saveState: false, loadState: false,
@@ -167,7 +176,6 @@ function startEmulator(core, romSource, gameTitle = "Retro Game", netplayOptions
   window.EJS_buttons = noSaveButtons;
   window.EJS_defaultButtons = noSaveButtons;
 
-  // 4. Nạp script core
   const oldScript = document.getElementById("ejs-loader");
   if (oldScript) oldScript.remove();
 
@@ -525,13 +533,153 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. SẢNH CHỜ NETPLAY (KÍCH HOẠT NATIVE LIBRETRO NETPLAY)
+// 7. WEBRTC P2P NETPLAY (HOST RUNS CORE + GUEST P2 GAMEPAD OVERLAY)
 // =================================================================
-
+let peerConnection = null;
+let dataChannel = null;
 let roomChannel = null;
+let isHostPlayer = false;
+let netplayActive = false;
 let currentLobbyCode = null;
 let netplayGameTarget = null;
 
+const rtcConfig = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
+  ]
+};
+
+// --- GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 TRÊN MÁY HOST (W3C STANDARD) ---
+const virtualP2Buttons = Array.from({ length: 17 }, () => ({
+  pressed: false,
+  touched: false,
+  value: 0
+}));
+const virtualP2Axes = [0, 0, 0, 0];
+
+const fakeP2Gamepad = {
+  id: "Standard Wireless Controller (Player 2)",
+  index: 1,
+  connected: true,
+  timestamp: performance.now(),
+  mapping: "standard",
+  axes: virtualP2Axes,
+  buttons: virtualP2Buttons
+};
+
+// Hook navigator.getGamepads trên máy Host để EmulatorJS tự nhận Controller 2
+const nativeGetGamepads = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : () => [];
+navigator.getGamepads = function() {
+  const list = nativeGetGamepads();
+  const gamepads = list ? Array.from(list) : [];
+  if (isHostPlayer && netplayActive) {
+    gamepads[1] = fakeP2Gamepad;
+  }
+  return gamepads;
+};
+
+function triggerP2GamepadConnected() {
+  try {
+    const ev = new GamepadEvent("gamepadconnected", { gamepad: fakeP2Gamepad });
+    window.dispatchEvent(ev);
+  } catch (e) {
+    try {
+      const ev = new Event("gamepadconnected");
+      ev.gamepad = fakeP2Gamepad;
+      window.dispatchEvent(ev);
+    } catch (err) {}
+  }
+}
+
+// Xử lý nạp phím từ Guest vào Gamepad 2 trên Host (Không bao giờ phát KeyboardEvent)
+function handleGuestInput(action, btnName) {
+  const isDown = (action === "keydown");
+  const val = isDown ? 1 : 0;
+
+  switch (btnName) {
+    case "UP":
+      virtualP2Buttons[12].pressed = isDown;
+      virtualP2Buttons[12].value = val;
+      virtualP2Axes[1] = isDown ? -1 : (virtualP2Buttons[13].pressed ? 1 : 0);
+      break;
+    case "DOWN":
+      virtualP2Buttons[13].pressed = isDown;
+      virtualP2Buttons[13].value = val;
+      virtualP2Axes[1] = isDown ? 1 : (virtualP2Buttons[12].pressed ? -1 : 0);
+      break;
+    case "LEFT":
+      virtualP2Buttons[14].pressed = isDown;
+      virtualP2Buttons[14].value = val;
+      virtualP2Axes[0] = isDown ? -1 : (virtualP2Buttons[15].pressed ? 1 : 0);
+      break;
+    case "RIGHT":
+      virtualP2Buttons[15].pressed = isDown;
+      virtualP2Buttons[15].value = val;
+      virtualP2Axes[0] = isDown ? 1 : (virtualP2Buttons[14].pressed ? -1 : 0);
+      break;
+    case "A":
+      virtualP2Buttons[0].pressed = isDown;
+      virtualP2Buttons[0].value = val;
+      break;
+    case "B":
+      virtualP2Buttons[1].pressed = isDown;
+      virtualP2Buttons[1].value = val;
+      break;
+    case "Y":
+      virtualP2Buttons[2].pressed = isDown;
+      virtualP2Buttons[2].value = val;
+      break;
+    case "X":
+      virtualP2Buttons[3].pressed = isDown;
+      virtualP2Buttons[3].value = val;
+      break;
+    case "L":
+      virtualP2Buttons[4].pressed = isDown;
+      virtualP2Buttons[4].value = val;
+      break;
+    case "R":
+      virtualP2Buttons[5].pressed = isDown;
+      virtualP2Buttons[5].value = val;
+      break;
+    case "SELECT":
+      virtualP2Buttons[8].pressed = isDown;
+      virtualP2Buttons[8].value = val;
+      break;
+    case "START":
+      virtualP2Buttons[9].pressed = isDown;
+      virtualP2Buttons[9].value = val;
+      break;
+  }
+  fakeP2Gamepad.timestamp = performance.now();
+}
+
+function resetP2Input() {
+  for (let i = 0; i < virtualP2Buttons.length; i++) {
+    virtualP2Buttons[i].pressed = false;
+    virtualP2Buttons[i].value = 0;
+  }
+  virtualP2Axes[0] = 0;
+  virtualP2Axes[1] = 0;
+  fakeP2Gamepad.timestamp = performance.now();
+}
+
+// Bảng ánh xạ phím cứng PC của Guest sang tên nút logic (Tránh 100% đụng phím Host)
+const KEY_TO_NETPLAY_BTN = {
+  "ArrowUp": "UP",    "KeyW": "UP",
+  "ArrowDown": "DOWN",  "KeyS": "DOWN",
+  "ArrowLeft": "LEFT",  "KeyA": "LEFT",
+  "ArrowRight": "RIGHT", "KeyD": "RIGHT",
+  "KeyX": "A",        "KeyK": "A",
+  "KeyZ": "B",        "KeyJ": "B",
+  "KeyA": "Y",        "KeyU": "Y",
+  "KeyS": "X",        "KeyI": "X",
+  "KeyQ": "L",        "KeyE": "R",
+  "Enter": "START",
+  "ShiftRight": "SELECT", "ShiftLeft": "SELECT"
+};
+
+// --- ĐIỀU HƯỚNG VÀ GIAO DIỆN MODAL SẢNH CHỜ ---
 function switchNetplayView(viewId) {
   document.querySelectorAll(".np-view").forEach(v => v.classList.remove("active"));
   document.getElementById(viewId)?.classList.add("active");
@@ -539,19 +687,17 @@ function switchNetplayView(viewId) {
 
 function openNetplayModal() {
   if (!currentUser) {
-    alert("Vui lòng đăng nhập để mở sảnh Netplay!");
+    alert("Vui lòng đăng nhập tài khoản trước khi chơi Online!");
     openAuthModal();
     return;
   }
-  const modal = document.getElementById("netplay-modal");
-  if (modal) modal.style.display = "flex";
+  document.getElementById("netplay-modal").style.display = "flex";
   switchNetplayView("np-view-select");
 }
 
 function closeNetplayModal() {
-  if (currentLobbyCode) cancelNetplayLobby();
-  const modal = document.getElementById("netplay-modal");
-  if (modal) modal.style.display = "none";
+  if (currentLobbyCode && !netplayActive) cancelNetplayLobby();
+  document.getElementById("netplay-modal").style.display = "none";
 }
 
 function npBackToSelect() {
@@ -562,72 +708,50 @@ function renderHostGameOptions(games) {
   const select = document.getElementById("np-host-game-select");
   if (!select) return;
   select.innerHTML = '<option value="">-- Chọn game trong danh sách --</option>';
-
-  if (!games || games.length === 0) {
-    const opt = document.createElement("option");
-    opt.disabled = true;
-    opt.innerText = "Không tìm thấy game phù hợp";
-    select.appendChild(opt);
-    return;
-  }
-
   games.forEach(g => {
     const opt = document.createElement("option");
     opt.value = g.id;
-    opt.innerText = `[${g.system || g.core?.toUpperCase() || 'ROM'}] ${g.title}`;
+    opt.innerText = `[${g.system || 'ROM'}] ${g.title}`;
     select.appendChild(opt);
   });
-
   if (games.length === 1) select.selectedIndex = 1;
 }
 
 function filterHostGames(keyword) {
   const kw = (keyword || "").trim().toLowerCase();
-  const filtered = allGamesList.filter(g =>
-    g.title.toLowerCase().includes(kw) || (g.system && g.system.toLowerCase().includes(kw))
-  );
-  renderHostGameOptions(filtered);
+  renderHostGameOptions(allGamesList.filter(g => g.title.toLowerCase().includes(kw)));
 }
 
 function npShowHostSelect() {
-  const searchInput = document.getElementById("np-host-search");
-  if (searchInput) searchInput.value = "";
   renderHostGameOptions(allGamesList);
   switchNetplayView("np-view-host-select");
 }
 
-// 1. HOST TẠO PHÒNG CHỜ
+// 1. HOST: TẠO PHÒNG CHỜ
 function hostConfirmCreateLobby() {
   const select = document.getElementById("np-host-game-select");
   const fileInput = document.getElementById("np-host-file-input");
   const selectedGameId = select ? select.value : "";
   const localFile = fileInput?.files[0];
 
-  if (!selectedGameId && !localFile) {
-    alert("Vui lòng chọn 1 game hoặc nạp ROM!");
-    return;
-  }
+  if (!selectedGameId && !localFile) return alert("Vui lòng chọn 1 game hoặc nạp ROM!");
 
+  isHostPlayer = true;
+  netplayActive = false;
   currentLobbyCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
   if (selectedGameId) {
     const found = allGamesList.find(g => g.id === selectedGameId);
-    netplayGameTarget = {
-      id: found.id, title: found.title, core: found.core,
-      rom_url: found.rom_url, isLocal: false
-    };
+    netplayGameTarget = { ...found, isLocal: false };
   } else {
-    netplayGameTarget = {
-      id: "local_" + localFile.name.replace(/[^a-zA-Z0-9]/g, "_"),
-      title: localFile.name, core: "gba", isLocal: true, file: localFile
-    };
+    netplayGameTarget = { id: "local_" + Date.now(), title: localFile.name, core: "gba", isLocal: true, file: localFile };
   }
 
   document.getElementById("np-display-pin").innerText = currentLobbyCode;
   document.getElementById("np-lobby-gamename").innerText = netplayGameTarget.title;
   switchNetplayView("np-view-host-lobby");
 
-  initHostNetplayChannel(currentLobbyCode);
+  initNetplaySignaling(currentLobbyCode, true);
 }
 
 function cancelNetplayLobby() {
@@ -636,33 +760,18 @@ function cancelNetplayLobby() {
     supabaseClient.removeChannel(roomChannel);
     roomChannel = null;
   }
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  dataChannel = null;
   currentLobbyCode = null;
-  netplayGameTarget = null;
+  netplayActive = false;
+  resetP2Input();
   switchNetplayView("np-view-select");
 }
 
-// Bắt tay gửi thông tin game qua Supabase Broadcast
-function initHostNetplayChannel(roomId) {
-  if (roomChannel) supabaseClient.removeChannel(roomChannel);
-
-  roomChannel = supabaseClient.channel(`netplay_${roomId}`, { config: { broadcast: { self: false } } });
-  roomChannel
-    .on("broadcast", { event: "signal" }, async ({ payload }) => {
-      if (payload.type === "guest_joined") {
-        // Gửi dữ liệu ROM cho Guest và ra lệnh cả 2 cùng vào game
-        roomChannel.send({
-          type: "broadcast",
-          event: "signal",
-          payload: { type: "start_match", game: netplayGameTarget }
-        });
-
-        launchNativeNetplay(true);
-      }
-    })
-    .subscribe();
-}
-
-// 2. CLIENT VÀO PHÒNG
+// 2. GUEST: TÌM VÀ VÀO PHÒNG BẰNG PIN
 function npShowGuestInput() {
   switchNetplayView("np-view-guest");
 }
@@ -670,83 +779,241 @@ function npShowGuestInput() {
 function clientJoinLobby() {
   const pinInput = document.getElementById("np-guest-pin-input");
   const roomId = pinInput ? pinInput.value.trim().toUpperCase() : "";
-  if (roomId.length !== 6) return alert("Mã phòng hợp lệ gồm 6 ký tự!");
+  if (roomId.length !== 6) return alert("Mã phòng hợp lệ gồm đúng 6 ký tự!");
 
+  isHostPlayer = false;
+  netplayActive = false;
   currentLobbyCode = roomId;
-  switchNetplayView("np-view-sync");
-  document.getElementById("np-sync-status").innerText = "Đang kết nối tới phòng của Host...";
 
-  initGuestNetplayChannel(currentLobbyCode);
+  switchNetplayView("np-view-sync");
+  document.getElementById("np-sync-status").innerText = "Đang kết nối tới máy Host...";
+
+  initNetplaySignaling(currentLobbyCode, false);
 }
 
-function initGuestNetplayChannel(roomId) {
+// 3. BẮT TAY KẾT NỐI WEBRTC P2P
+function initNetplaySignaling(roomId, isHost) {
   if (roomChannel) supabaseClient.removeChannel(roomChannel);
 
-  roomChannel = supabaseClient.channel(`netplay_${roomId}`, { config: { broadcast: { self: false } } });
+  roomChannel = supabaseClient.channel(`room_${roomId}`, { config: { broadcast: { self: false } } });
   roomChannel
     .on("broadcast", { event: "signal" }, async ({ payload }) => {
-      if (payload.type === "lobby_closed") {
-        alert("Host đã hủy phòng chờ.");
-        closeNetplayModal();
-      } else if (payload.type === "start_match") {
-        netplayGameTarget = payload.game;
-        document.getElementById("np-sync-status").innerText = `Đang đồng bộ ROM: ${netplayGameTarget.title}...`;
-        launchNativeNetplay(false);
-      }
+      await handleNetplaySignal(payload);
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
-        roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "guest_joined" } });
+        setupPeerConnection(isHost);
+        if (!isHost) {
+          roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "guest_joined" } });
+        }
       }
     });
 }
 
-// 3. KHỞI CHẠY ĐỒNG BỘ TRÊN CẢ HAI THIẾT BỊ
-async function launchNativeNetplay(isHost) {
-  const modal = document.getElementById("netplay-modal");
-  if (modal) modal.style.display = "none";
+// Đợi Canvas của EmulatorJS render xong trên máy Host để capture stream
+async function waitForHostCanvas() {
+  for (let i = 0; i < 40; i++) {
+    const canvas = document.querySelector("#game canvas");
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      return canvas;
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return document.querySelector("#game canvas");
+}
 
-  const netplayConfig = {
-    enabled: true,
-    roomId: currentLobbyCode,
-    nickname: (userProfile?.username || (isHost ? "Host_P1" : "Guest_P2"))
-  };
+async function handleNetplaySignal(data) {
+  if (data.type === "lobby_closed") {
+    alert("Host đã hủy hoặc rời phòng đấu.");
+    closeNetplayModal();
+    if (!isHostPlayer) {
+      document.getElementById("game").innerHTML = "";
+      document.getElementById("game-placeholder")?.style.removeProperty("display");
+    }
+    return;
+  }
 
-  if (netplayGameTarget.isLocal) {
-    const blobUrl = URL.createObjectURL(netplayGameTarget.file);
-    startEmulator(netplayGameTarget.core, blobUrl, netplayGameTarget.title, netplayConfig);
-  } else {
-    // Tải hoặc lấy từ IndexedDB
-    let romBlob = null;
-    if (window.idbKeyval) {
-      const cached = await window.idbKeyval.get(`rom_${netplayGameTarget.id}`);
-      romBlob = cached instanceof Blob ? cached : cached?.blob;
+  if (data.type === "guest_joined" && isHostPlayer) {
+    switchNetplayView("np-view-sync");
+    document.getElementById("np-sync-status").innerText = "Khách đã vào phòng! Đang khởi tạo đường truyền...";
+
+    // Khởi động emulator trên máy Host
+    if (netplayGameTarget.isLocal) {
+      startEmulator(netplayGameTarget.core, URL.createObjectURL(netplayGameTarget.file), netplayGameTarget.title);
+    } else {
+      await launchGameWithCache(netplayGameTarget.id, netplayGameTarget.core, netplayGameTarget.rom_url, netplayGameTarget.title);
     }
 
-    if (!romBlob) {
-      romBlob = await fetchWithProgress(netplayGameTarget.rom_url);
-      if (window.idbKeyval) {
-        await window.idbKeyval.set(`rom_${netplayGameTarget.id}`, {
-          blob: romBlob, title: netplayGameTarget.title,
-          core: netplayGameTarget.core.toUpperCase(), savedAt: new Date().toLocaleDateString("vi-VN")
-        });
+    // Đợi Canvas sẵn sàng rồi add Track vào WebRTC
+    const canvas = await waitForHostCanvas();
+    if (canvas && peerConnection) {
+      triggerP2GamepadConnected();
+
+      // 1. Thêm Video track 60 FPS
+      const videoStream = canvas.captureStream(60);
+      const vTrack = videoStream.getVideoTracks()[0];
+      if (vTrack) {
+        vTrack.contentHint = "motion";
+        const sender = peerConnection.addTrack(vTrack, videoStream);
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.degradationPreference = "maintain-framerate";
+          sender.setParameters(params);
+        } catch (e) {}
+      }
+
+      // 2. Thêm Audio track game
+      if (netplayAudioStream) {
+        const aTrack = netplayAudioStream.getAudioTracks()[0];
+        if (aTrack) peerConnection.addTrack(aTrack, netplayAudioStream);
       }
     }
 
-    const blobUrl = URL.createObjectURL(romBlob);
-    startEmulator(netplayGameTarget.core, blobUrl, netplayGameTarget.title, netplayConfig);
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "offer", sdp: offer } });
+
+  } else if (data.type === "offer" && !isHostPlayer) {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "answer", sdp: answer } });
+
+  } else if (data.type === "answer" && isHostPlayer) {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+  } else if (data.type === "candidate" && peerConnection) {
+    try {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch (e) {}
   }
+}
+
+function setupPeerConnection(isHost) {
+  peerConnection = new RTCPeerConnection(rtcConfig);
+
+  peerConnection.onicecandidate = (e) => {
+    if (e.candidate && roomChannel) {
+      roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "candidate", candidate: e.candidate } });
+    }
+  };
+
+  if (isHost) {
+    // DataChannel chế độ Unreliable để truyền packet phím không trễ
+    dataChannel = peerConnection.createDataChannel("p2_input", { ordered: false, maxRetransmits: 0 });
+    setupDataChannelHandlers();
+  } else {
+    // Máy Guest nhận luồng hình ảnh/âm thanh từ Host
+    peerConnection.ontrack = (e) => renderZeroLatencyVideo(e.streams[0]);
+    peerConnection.ondatachannel = (e) => {
+      dataChannel = e.channel;
+      setupDataChannelHandlers();
+    };
+  }
+}
+
+function setupDataChannelHandlers() {
+  dataChannel.onopen = () => {
+    netplayActive = true;
+    runCountdownAnimation();
+  };
+
+  dataChannel.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "P2_INPUT" && isHostPlayer) {
+        handleGuestInput(msg.action, msg.btn);
+      }
+    } catch (err) {}
+  };
+
+  dataChannel.onclose = () => {
+    netplayActive = false;
+    resetP2Input();
+  };
+}
+
+// Guest: Render thẻ Video Zero-Buffer nhận stream từ Host
+function renderZeroLatencyVideo(stream) {
+  const container = document.getElementById("game-container");
+  const placeholder = document.getElementById("game-placeholder");
+  const loader = document.getElementById("game-loader");
+  if (placeholder) placeholder.style.display = "none";
+  if (loader) loader.style.display = "none";
+
+  let gameDiv = document.getElementById("game");
+  if (!gameDiv) {
+    gameDiv = document.createElement("div");
+    gameDiv.id = "game";
+    container.appendChild(gameDiv);
+  }
+
+  gameDiv.innerHTML = `
+    <video id="netplay-video" autoplay playsinline 
+      style="width:100%; height:100%; object-fit:contain; background:#000; display:block;">
+    </video>
+  `;
+
+  const video = document.getElementById("netplay-video");
+  video.srcObject = stream;
+  if ("playoutDelayHint" in HTMLMediaElement.prototype) {
+    video.playoutDelayHint = 0;
+  }
+
+  // Tự động phát âm thanh hoặc gỡ mute ngay khi người chơi chạm màn hình
+  video.muted = false;
+  video.volume = 1.0;
+  video.play().catch(() => {
+    video.muted = true;
+    video.play().then(() => {
+      const unmute = () => {
+        video.muted = false;
+        window.removeEventListener("click", unmute);
+        window.removeEventListener("touchstart", unmute);
+      };
+      window.addEventListener("click", unmute);
+      window.addEventListener("touchstart", unmute);
+    });
+  });
+
+  // Đảm bảo bàn phím ảo hiển thị đè lên màn hình stream
+  const overlay = document.getElementById("virtual-gamepad");
+  if (overlay) overlay.style.display = "block";
+}
+
+function runCountdownAnimation() {
+  switchNetplayView("np-view-sync");
+  const spinner = document.querySelector(".sync-spinner");
+  const statusTxt = document.getElementById("np-sync-status");
+  const countdownEl = document.getElementById("np-countdown");
+
+  if (spinner) spinner.style.display = "none";
+  if (statusTxt) statusTxt.innerText = "KẾT NỐI THÀNH CÔNG! BẮT ĐẦU SAU:";
+  if (countdownEl) countdownEl.style.display = "block";
+
+  let count = 3;
+  if (countdownEl) countdownEl.innerText = count;
+
+  const timer = setInterval(() => {
+    count--;
+    if (count > 0) {
+      if (countdownEl) countdownEl.innerText = count;
+    } else {
+      clearInterval(timer);
+      document.getElementById("netplay-modal").style.display = "none";
+      if (isHostPlayer) triggerP2GamepadConnected();
+    }
+  }, 1000);
 }
 
 function copyRoomCode() {
   if (!currentLobbyCode) return;
-  navigator.clipboard.writeText(currentLobbyCode).then(() => {
-    alert("Đã sao chép mã phòng: " + currentLobbyCode);
-  });
+  navigator.clipboard.writeText(currentLobbyCode).then(() => alert("Đã copy: " + currentLobbyCode));
 }
 
 // =================================================================
-// 8. BÀN PHÍM ẢO & TÙY CHỈNH NEO TỌA ĐỘ 4 GÓC
+// 8. BÀN PHÍM ẢO & ĐIỀU KHIỂN CÁCH LY TUYỆT ĐỐI
 // =================================================================
 const KEY_MAP_CONFIG = {
   "ArrowUp":    { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
@@ -768,35 +1035,27 @@ let selectedElementId = "all";
 let padLayoutSettings = {};
 
 function initVirtualGamepad() {
-  // Lắng nghe bàn phím PC cho Guest khi chơi Netplay
+  // Lắng nghe phím cứng PC của Guest (Bắt cả WASD lẫn Arrow keys gửi sang P2)
   window.addEventListener("keydown", (e) => {
-    if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
-      // Map cả WASD lẫn phím mũi tên về mã phím chuẩn
-      const keyAlias = {
-        "KeyW": "ArrowUp", "KeyS": "ArrowDown", "KeyA": "ArrowLeft", "KeyD": "ArrowRight",
-        "KeyJ": "KeyZ", "KeyK": "KeyX", "KeyU": "KeyA", "KeyI": "KeyS"
-      };
-      const mappedCode = keyAlias[e.code] || e.code;
-      if (KEY_MAP_CONFIG[mappedCode]) {
+    if (netplayActive && !isHostPlayer) {
+      const btn = KEY_TO_NETPLAY_BTN[e.code];
+      if (btn) {
         e.preventDefault();
-        dispatchGameKey("keydown", mappedCode);
+        sendGuestInput("keydown", btn);
       }
     }
   });
 
   window.addEventListener("keyup", (e) => {
-    if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
-      const keyAlias = {
-        "KeyW": "ArrowUp", "KeyS": "ArrowDown", "KeyA": "ArrowLeft", "KeyD": "ArrowRight",
-        "KeyJ": "KeyZ", "KeyK": "KeyX", "KeyU": "KeyA", "KeyI": "KeyS"
-      };
-      const mappedCode = keyAlias[e.code] || e.code;
-      if (KEY_MAP_CONFIG[mappedCode]) {
+    if (netplayActive && !isHostPlayer) {
+      const btn = KEY_TO_NETPLAY_BTN[e.code];
+      if (btn) {
         e.preventDefault();
-        dispatchGameKey("keyup", mappedCode);
+        sendGuestInput("keyup", btn);
       }
     }
   });
+
   loadGamepadConfig();
 
   document.getElementById("btn-toggle-pad")?.addEventListener("click", () => {
@@ -833,20 +1092,26 @@ function initVirtualGamepad() {
   setupButtonInputEvents();
 }
 
+function sendGuestInput(action, btnName) {
+  if (dataChannel && dataChannel.readyState === "open") {
+    dataChannel.send(JSON.stringify({
+      type: "P2_INPUT",
+      action: action,
+      btn: btnName
+    }));
+  }
+}
+
+// Xử lý sự kiện bấm phím: Phân luồng Player 1 và Player 2 độc lập
 function dispatchGameKey(type, keyCodeIdentifier) {
-  // 1. NẾU LÀ GUEST (PLAYER 2): Bắn thẳng tín hiệu qua WebRTC sang máy Host
-  if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
-    if (dataChannel && dataChannel.readyState === "open") {
-      dataChannel.send(JSON.stringify({
-        type: "P2_INPUT",
-        action: type,
-        code: keyCodeIdentifier
-      }));
-    }
-    return; // Dừng lại, không phát vào máy Guest
+  // 1. NẾU LÀ GUEST (PLAYER 2): Dịch sang mã nút Gamepad và gửi qua DataChannel
+  if (netplayActive && !isHostPlayer) {
+    const btnName = KEY_TO_NETPLAY_BTN[keyCodeIdentifier];
+    if (btnName) sendGuestInput(type, btnName);
+    return;
   }
 
-  // 2. NẾU LÀ HOST HOẶC CHƠI ĐƠN: Nạp phím vào EmulatorJS (Player 1)
+  // 2. NẾU LÀ HOST HOẶC CHƠI ĐƠN: Điều khiển Player 1 thông qua KeyboardEvent
   const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
   if (!keyInfo) return;
 
