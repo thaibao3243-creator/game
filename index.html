@@ -21,28 +21,33 @@
 
   <!-- NỘI DUNG CHÍNH -->
   <main class="main-content">
-    <!-- KHUNG GIẢ LẬP VÀ MÀN HÌNH CHƠI -->
     <section id="emulator-section">
       <div id="game-container">
-        <!-- 1. Thanh tiện ích nổi trên đỉnh (Gom nhóm & tự mờ khi idle) -->
-        <div class="mobile-top-bar" id="mobile-top-bar">
-          <div id="netplay-badge" class="netplay-badge" style="display:none;" title="Trạng thái kết nối P2P">
-            <span class="pulse-dot"></span>
-            <span id="netplay-badge-text">2P: Sẵn sàng</span>
-          </div>
-          <button id="btn-config-pad" class="btn-icon" title="Tùy chỉnh phím ảo cảm ứng">⚙️</button>
-          <button id="btn-keymap" class="btn-icon" title="Cài đặt phím bàn phím PC">⌨️</button>
-          <button id="btn-toggle-pad" class="btn-icon" title="Ẩn/Hiện phím ảo">🎮</button>
-          <button id="btn-fullscreen" class="btn-icon" title="Toàn màn hình">⛶</button>
+
+        <!-- 1. BADGE TRẠNG THÁI KẾT NỐI NETPLAY 2P THỜI GIAN THỰC -->
+        <div id="netplay-status-badge" class="netplay-status-badge status-idle">
+          <span class="status-indicator"></span>
+          <span id="netplay-status-text">Đơn đấu</span>
         </div>
 
-        <!-- Màn hình chờ -->
+        <!-- 2. NÚT ĐIỀU KHIỂN NỔI GOM GỌN (TỰ ĐỘNG MỜ KHI RẢNH) -->
+        <div id="floating-quick-menu" class="floating-quick-menu is-idle">
+          <button id="btn-quick-toggle" class="fab-icon-btn" title="Cài đặt nhanh">⚙️</button>
+          <div id="quick-menu-dropdown" class="quick-menu-dropdown" style="display: none;">
+            <button class="menu-item-btn" onclick="openKeymapModal()">⌨️ Đổi phím bàn phím</button>
+            <button class="menu-item-btn" onclick="toggleVirtualGamepad()">🎮 Ẩn/Hiện phím ảo</button>
+            <button class="menu-item-btn" onclick="toggleGamepadConfig(true)">📐 Chỉnh vị trí & cỡ phím</button>
+            <button class="menu-item-btn" onclick="toggleFullscreen()">⛶ Toàn màn hình</button>
+          </div>
+        </div>
+
+        <!-- 3. MÀN HÌNH CHỜ BAN ĐẦU -->
         <div id="game-placeholder">
           <div class="placeholder-icon">🕹️</div>
           <p>Chọn game bên dưới hoặc kéo thả ROM để bắt đầu</p>
         </div>
 
-        <!-- Lớp phủ tiến trình tải -->
+        <!-- 4. TIẾN TRÌNH TẢI ROM -->
         <div id="game-loader" style="display: none;">
           <div class="loading-box">
             <div class="loading-title" id="loader-title">Đang kết nối...</div>
@@ -51,39 +56,39 @@
           </div>
         </div>
 
-        <!-- Canvas EmulatorJS / Video Stream -->
+        <!-- 5. KHUNG RENDER CHÍNH (CANVAS CỦA HOST HOẶC VIDEO ZERO-DELAY CỦA CLIENT) -->
         <div id="game"></div>
 
-        <!-- BÀN PHÍM ẢO CẢM ỨNG (TÁCH RỜI NEO TỌA ĐỘ) -->
+        <!-- 6. PHÍM ẢO CẢM ỨNG ĐỘC LẬP NEO 4 GÓC -->
         <div id="virtual-gamepad" class="gamepad-overlay">
-          <div id="pad-l" class="pad-element" data-name="Nút vai L">
-            <button class="v-btn v-btn-shoulder" data-key="KeyQ">L</button>
+          <div id="pad-l" class="pad-element" data-btn="L" data-name="Nút vai L">
+            <button class="v-btn v-btn-shoulder" data-btn="L">L</button>
           </div>
-          <div id="pad-r" class="pad-element" data-name="Nút vai R">
-            <button class="v-btn v-btn-shoulder" data-key="KeyE">R</button>
+          <div id="pad-r" class="pad-element" data-btn="R" data-name="Nút vai R">
+            <button class="v-btn v-btn-shoulder" data-btn="R">R</button>
           </div>
           <div id="pad-dpad" class="pad-element dpad-cluster" data-name="Cụm D-Pad">
-            <button class="v-btn dpad-btn up" data-key="ArrowUp">▲</button>
-            <button class="v-btn dpad-btn left" data-key="ArrowLeft">◀</button>
+            <button class="v-btn dpad-btn up" data-btn="UP">▲</button>
+            <button class="v-btn dpad-btn left" data-btn="LEFT">◀</button>
             <div class="dpad-center"></div>
-            <button class="v-btn dpad-btn right" data-key="ArrowRight">▶</button>
-            <button class="v-btn dpad-btn down" data-key="ArrowDown">▼</button>
+            <button class="v-btn dpad-btn right" data-btn="RIGHT">▶</button>
+            <button class="v-btn dpad-btn down" data-btn="DOWN">▼</button>
           </div>
-          <div id="pad-select" class="pad-element" data-name="Nút SELECT">
-            <button class="v-btn v-btn-pill" data-key="ShiftRight">SELECT</button>
+          <div id="pad-select" class="pad-element" data-btn="SELECT" data-name="Nút SELECT">
+            <button class="v-btn v-btn-pill" data-btn="SELECT">SELECT</button>
           </div>
-          <div id="pad-start" class="pad-element" data-name="Nút START">
-            <button class="v-btn v-btn-pill" data-key="Enter">START</button>
+          <div id="pad-start" class="pad-element" data-btn="START" data-name="Nút START">
+            <button class="v-btn v-btn-pill" data-btn="START">START</button>
           </div>
           <div id="pad-actions" class="pad-element action-cluster" data-name="Cụm nút A/B/X/Y">
-            <button class="v-btn action-btn x" data-key="KeyS">X</button>
-            <button class="v-btn action-btn y" data-key="KeyA">Y</button>
-            <button class="v-btn action-btn b" data-key="KeyZ">B</button>
-            <button class="v-btn action-btn a" data-key="KeyX">A</button>
+            <button class="v-btn action-btn x" data-btn="X">X</button>
+            <button class="v-btn action-btn y" data-btn="Y">Y</button>
+            <button class="v-btn action-btn b" data-btn="B">B</button>
+            <button class="v-btn action-btn a" data-btn="A">A</button>
           </div>
         </div>
 
-        <!-- BẢNG CẤU HÌNH PHÍM ẢO CẢM ỨNG -->
+        <!-- 7. BẢNG CHỈNH KÍCH THƯỚC / ĐỘ MỜ / VỊ TRÍ PHÍM ẢO -->
         <div id="gamepad-config-bar" class="gamepad-config-bar" style="display: none;">
           <div class="config-header">
             <span>Đang chọn: <strong id="cfg-target-name">Toàn bộ phím</strong></span>
@@ -100,7 +105,6 @@
             <button class="btn btn-sm btn-outline" onclick="resetGamepadLayout()">Mặc định</button>
             <button class="btn btn-sm btn-primary" onclick="toggleGamepadConfig(false)">Xong</button>
           </div>
-          <p class="config-tip">💡 Chạm nút bất kỳ để chọn, sau đó kéo thả hoặc chỉnh tỉ lệ riêng.</p>
         </div>
       </div>
 
@@ -126,9 +130,8 @@
         <input type="file" id="file-input" accept=".gba,.nes,.snes,.iso,.bin,.chd,.zip" hidden>
         <button class="btn btn-outline" onclick="document.getElementById('file-input').click()">Chọn file từ máy</button>
       </div>
-
       <div class="system-select-card">
-        <label for="core-selector">Hệ máy giả lập khi upload:</label>
+        <label for="core-selector">Hệ máy khi upload:</label>
         <select id="core-selector">
           <option value="gba">Game Boy Advance (GBA)</option>
           <option value="psx">PlayStation 1 (PS1)</option>
@@ -161,6 +164,22 @@
     </section>
   </main>
 
+  <!-- MODAL MAP PHÍM BÀN PHÍM ĐỘC LẬP (KEYBOARD REMAPPING) -->
+  <div id="keymap-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box keymap-modal-box">
+      <div class="modal-header">
+        <h3 id="keymap-title">⌨️ Cài Đặt Phím Bấm</h3>
+        <button class="btn-close" onclick="closeKeymapModal()">✕</button>
+      </div>
+      <p class="tab-desc">Chạm vào nút cần đổi rồi nhấn một phím bất kỳ trên bàn phím. Lưu riêng cho từng máy, không sợ trùng nhau.</p>
+      <div class="keymap-grid" id="keymap-list"></div>
+      <div class="modal-actions-row" style="margin-top: 1rem;">
+        <button class="btn btn-outline" onclick="resetCurrentKeymap()">Khôi phục mặc định</button>
+        <button class="btn btn-primary" onclick="closeKeymapModal()">Hoàn tất</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL ĐĂNG NHẬP / ĐĂNG KÝ -->
   <div id="auth-modal" class="modal-overlay" style="display:none;">
     <div class="modal-box">
@@ -182,7 +201,7 @@
     </div>
   </div>
 
-  <!-- MODAL TRUNG TÂM TÀI KHOẢN -->
+  <!-- MODAL TÀI KHOẢN -->
   <div id="account-modal" class="modal-overlay" style="display:none;">
     <div class="modal-box account-modal-box">
       <div class="modal-header">
@@ -206,38 +225,32 @@
       </div>
 
       <div id="tab-roms" class="tab-content">
-        <p class="tab-desc">Các file game đã lưu đệm vào bộ nhớ IndexedDB để tải ngay lập tức:</p>
-        <div id="local-roms-list" class="storage-list">
-          <p class="empty-state">Đang quét bộ nhớ...</p>
-        </div>
+        <p class="tab-desc">Các file game đã lưu đệm vào bộ nhớ IndexedDB:</p>
+        <div id="local-roms-list" class="storage-list"></div>
       </div>
 
       <div id="tab-saves" class="tab-content">
-        <p class="tab-desc">Các bản lưu tiến trình (Slot 1 - 3) trên Supabase Cloud Storage:</p>
-        <div id="cloud-saves-list" class="storage-list">
-          <p class="empty-state">Đang nạp danh sách file save...</p>
-        </div>
+        <p class="tab-desc">Các bản lưu tiến trình trên Supabase Cloud Storage:</p>
+        <div id="cloud-saves-list" class="storage-list"></div>
       </div>
     </div>
   </div>
 
-  <!-- MODAL SẢNH NETPLAY ONLINE (P2P LOCKSTEP) -->
+  <!-- MODAL SẢNH NETPLAY ONLINE -->
   <div id="netplay-modal" class="modal-overlay" style="display: none;">
     <div class="modal-box netplay-box">
-      <!-- 1. Chọn chế độ Host / Guest -->
       <div id="np-view-select" class="np-view active">
         <div class="modal-header">
           <h3>🎮 Sảnh Chơi Online (P2P Netplay)</h3>
           <button class="btn-close" onclick="closeNetplayModal()">✕</button>
         </div>
-        <p class="tab-desc">Chơi đối kháng 2 người qua mạng với độ trễ thấp (Lockstep P2P).</p>
+        <p class="tab-desc">Đối kháng 2 người thời gian thực, độ trễ sub-15ms, không bao giờ desync.</p>
         <div class="np-role-buttons">
-          <button class="btn btn-primary btn-large" onclick="npShowHostSelect()">👑 Tạo phòng mới (Host)</button>
-          <button class="btn btn-secondary btn-large" onclick="npShowGuestInput()">🔍 Tìm phòng bằng mã (Client)</button>
+          <button class="btn btn-primary btn-large" onclick="npShowHostSelect()">👑 Tạo phòng mới (Host - P1)</button>
+          <button class="btn btn-secondary btn-large" onclick="npShowGuestInput()">🔍 Tìm phòng bằng mã (Client - P2)</button>
         </div>
       </div>
 
-      <!-- 2. Host: Chọn Game có thanh tìm kiếm -->
       <div id="np-view-host-select" class="np-view">
         <div class="modal-header">
           <h3>Chọn Game Đấu Online</h3>
@@ -245,7 +258,7 @@
         </div>
         <div class="np-form-group">
           <label>Chọn từ thư viện có sẵn:</label>
-          <input type="text" id="np-host-search" class="custom-search-input" placeholder="🔍 Gõ tên game hoặc hệ máy để lọc..." oninput="filterHostGames(this.value)">
+          <input type="text" id="np-host-search" class="custom-search-input" placeholder="🔍 Gõ để lọc nhanh game..." oninput="filterHostGames(this.value)">
           <select id="np-host-game-select" class="custom-select" style="margin-top: 6px;">
             <option value="">-- Chọn game trong danh sách --</option>
           </select>
@@ -258,13 +271,12 @@
         <button class="btn btn-primary w-100" style="margin-top: 1rem;" onclick="hostConfirmCreateLobby()">Tạo Phòng Chờ</button>
       </div>
 
-      <!-- 3. Host: Phòng chờ đối thủ kèm mã PIN -->
       <div id="np-view-host-lobby" class="np-view">
         <div class="modal-header">
           <h3>Phòng Chờ Đối Thủ</h3>
         </div>
         <div class="lobby-card">
-          <span class="lobby-label">MÃ PHÒNG (Gửi cho bạn bè)</span>
+          <span class="lobby-label">MÃ PHÒNG (GỬI CHO BẠN BÈ)</span>
           <div class="room-pin" id="np-display-pin">------</div>
           <button class="btn-copy" onclick="copyRoomCode()">📋 Sao chép mã</button>
         </div>
@@ -277,7 +289,6 @@
         <button class="btn btn-outline w-100" style="margin-top: 1.2rem;" onclick="cancelNetplayLobby()">Hủy Phòng</button>
       </div>
 
-      <!-- 4. Guest: Nhập mã PIN -->
       <div id="np-view-guest" class="np-view">
         <div class="modal-header">
           <h3>Tham Gia Phòng Chơi</h3>
@@ -290,34 +301,15 @@
         <button class="btn btn-primary w-100" style="margin-top: 1rem;" onclick="clientJoinLobby()">Vào Trận Đấu</button>
       </div>
 
-      <!-- 5. Đồng bộ trước khi vào game -->
       <div id="np-view-sync" class="np-view">
         <div class="modal-header">
-          <h3>Đang Đồng Bộ...</h3>
+          <h3>Đang Kết Nối P2P...</h3>
         </div>
         <div class="sync-box">
           <div class="sync-spinner"></div>
-          <p id="np-sync-status">Đang kết nối P2P qua WebRTC...</p>
+          <p id="np-sync-status">Đang đồng bộ luồng stream WebRTC...</p>
           <div class="countdown-number" id="np-countdown" style="display:none;">3</div>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL CÀI ĐẶT MAPPING PHÍM BÀN PHÍM (CHO CLIENT/P2) -->
-  <div id="keybind-modal" class="modal-overlay" style="display:none;">
-    <div class="modal-box keybind-modal-box">
-      <div class="modal-header">
-        <h3>⌨️ Cài Đặt Phím Bàn Phím (Player 2)</h3>
-        <button class="btn-close" onclick="closeKeybindModal()">✕</button>
-      </div>
-      <p class="tab-desc">Chạm vào ô phím của nút bất kỳ rồi nhấn 1 phím trên bàn phím để gán mới:</p>
-      
-      <div class="keybind-grid" id="keybind-list"></div>
-
-      <div class="modal-actions-row" style="margin-top: 1rem;">
-        <button class="btn btn-outline btn-sm" onclick="resetKeybindings()">Mặc định</button>
-        <button class="btn btn-primary btn-sm" onclick="closeKeybindModal()">Đóng</button>
       </div>
     </div>
   </div>

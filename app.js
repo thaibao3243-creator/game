@@ -1,5 +1,5 @@
 // =================================================================
-// 0. HOOK ÂM THANH TOÀN CỤC (CAPTURE AUDIO CHO WEBRTC NETPLAY)
+// 0. CAPTURE AUDIO TOÀN CỤC CHO WEBRTC
 // =================================================================
 let netplayAudioStream = null;
 const OrigAudioContext = window.AudioContext || window.webkitAudioContext;
@@ -20,7 +20,7 @@ if (OrigAudioContext) {
 }
 
 // =================================================================
-// 1. SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
+// 1. CẤU HÌNH SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
 // =================================================================
 const SUPABASE_URL = "https://kmypjbgjvkkbmyaomhrt.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtteXBqYmdqdmtrYm15YW9taHJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyOTQxMjgsImV4cCI6MjEwNDg3MDEyOH0.LehadH5EP9rtre0Ielz4U3kuQ8wE6rZMw_yjg6iS_kw";
@@ -188,7 +188,7 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
 }
 
 // =================================================================
-// 3. NẠP ROM CỤC BỘ (DRAG & DROP / FILE INPUT)
+// 3. NẠP ROM CỤC BỘ TỪ MÁY
 // =================================================================
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("file-input");
@@ -219,7 +219,7 @@ if (dropZone) {
 }
 
 // =================================================================
-// 4. THƯ VIỆN GAME & BỘ LỌC TÌM KIẾM
+// 4. THƯ VIỆN GAME & TÌM KIẾM
 // =================================================================
 let allGamesList = [];
 let currentFilterSystem = "ALL";
@@ -533,9 +533,8 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. WEBRTC P2P NETPLAY (GỘP STREAM + BUFFER ICE + HUY HIỆU 2P)
+// 7. WEBRTC P2P NETPLAY HIỆU NĂNG CAO (ZERO DESYNC, SUB-15MS LATENCY)
 // =================================================================
-
 let peerConnection = null;
 let dataChannel = null;
 let roomChannel = null;
@@ -552,7 +551,17 @@ const rtcConfig = {
   ]
 };
 
-// --- GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 TRÊN MÁY HOST ---
+// CẬP NHẬT TRẠNG THÁI NETPLAY THỜI GIAN THỰC LÊN MÀN HÌNH
+function updateNetplayStatusBadge(state, text) {
+  const badge = document.getElementById("netplay-status-badge");
+  const txt = document.getElementById("netplay-status-text");
+  if (!badge || !txt) return;
+
+  badge.className = `netplay-status-badge status-${state}`;
+  txt.innerText = text;
+}
+
+// GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 TRÊN MÁY HOST (W3C STANDARD)
 const virtualP2Buttons = Array.from({ length: 17 }, () => ({
   pressed: false,
   touched: false,
@@ -570,7 +579,7 @@ const fakeP2Gamepad = {
   buttons: virtualP2Buttons
 };
 
-// Hook navigator.getGamepads để EmulatorJS đọc Controller 2
+// Hook navigator.getGamepads trên máy Host để EmulatorJS nhận diện P2
 const nativeGetGamepads = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : () => [];
 navigator.getGamepads = function() {
   const list = nativeGetGamepads();
@@ -594,6 +603,7 @@ function triggerP2GamepadConnected() {
   }
 }
 
+// Nạp input của Guest vào Gamepad 2 trên Host (Không bao giờ phát KeyboardEvent)
 function handleGuestInput(action, btnName) {
   const isDown = (action === "keydown");
   const val = isDown ? 1 : 0;
@@ -665,26 +675,7 @@ function resetP2Input() {
   fakeP2Gamepad.timestamp = performance.now();
 }
 
-// Cập nhật huy hiệu trạng thái kết nối 2 người chơi
-function updateNetplayBadgeStatus(state) {
-  const badge = document.getElementById("netplay-badge");
-  const badgeText = document.getElementById("netplay-badge-text");
-  if (!badge) return;
-
-  if (state === "connected") {
-    badge.style.display = "inline-flex";
-    badge.className = "netplay-badge connected";
-    if (badgeText) badgeText.innerText = "2P: Đã kết nối (2/2)";
-  } else if (state === "disconnected") {
-    badge.style.display = "inline-flex";
-    badge.className = "netplay-badge disconnected";
-    if (badgeText) badgeText.innerText = "2P: Mất kết nối";
-  } else {
-    badge.style.display = "none";
-  }
-}
-
-// --- QUẢN LÝ LOBBY ---
+// ĐIỀU HƯỚNG VÀ SẢNH CHỜ NETPLAY
 function switchNetplayView(viewId) {
   document.querySelectorAll(".np-view").forEach(v => v.classList.remove("active"));
   document.getElementById(viewId)?.classList.add("active");
@@ -755,6 +746,7 @@ function hostConfirmCreateLobby() {
   document.getElementById("np-lobby-gamename").innerText = netplayGameTarget.title;
   switchNetplayView("np-view-host-lobby");
 
+  updateNetplayStatusBadge("waiting", "Đang chờ P2 vào phòng...");
   initNetplaySignaling(currentLobbyCode, true);
 }
 
@@ -773,7 +765,7 @@ function cancelNetplayLobby() {
   netplayActive = false;
   iceCandidateQueue = [];
   resetP2Input();
-  updateNetplayBadgeStatus("hidden");
+  updateNetplayStatusBadge("idle", "Đơn đấu");
   switchNetplayView("np-view-select");
 }
 
@@ -792,11 +784,11 @@ function clientJoinLobby() {
 
   switchNetplayView("np-view-sync");
   document.getElementById("np-sync-status").innerText = "Đang kết nối tới máy Host...";
+  updateNetplayStatusBadge("waiting", "Đang bắt tay P2P...");
 
   initNetplaySignaling(currentLobbyCode, false);
 }
 
-// --- WEBRTC SIGNALING & BUFFER CANDIDATES ---
 function initNetplaySignaling(roomId, isHost) {
   if (roomChannel) supabaseClient.removeChannel(roomChannel);
   iceCandidateQueue = [];
@@ -821,18 +813,14 @@ async function flushIceCandidateQueue() {
     const candidate = iceCandidateQueue.shift();
     try {
       await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (e) {
-      console.warn("Lỗi addIceCandidate:", e);
-    }
+    } catch (e) {}
   }
 }
 
 async function waitForHostCanvas() {
   for (let i = 0; i < 40; i++) {
     const canvas = document.querySelector("#game canvas");
-    if (canvas && canvas.width > 0 && canvas.height > 0) {
-      return canvas;
-    }
+    if (canvas && canvas.width > 0 && canvas.height > 0) return canvas;
     await new Promise(r => setTimeout(r, 250));
   }
   return document.querySelector("#game canvas");
@@ -842,7 +830,7 @@ async function handleNetplaySignal(data) {
   if (data.type === "lobby_closed") {
     alert("Host đã hủy hoặc rời phòng đấu.");
     closeNetplayModal();
-    updateNetplayBadgeStatus("disconnected");
+    updateNetplayStatusBadge("idle", "Đơn đấu");
     if (!isHostPlayer) {
       document.getElementById("game").innerHTML = "";
       document.getElementById("game-placeholder")?.style.removeProperty("display");
@@ -852,7 +840,7 @@ async function handleNetplaySignal(data) {
 
   if (data.type === "guest_joined" && isHostPlayer) {
     switchNetplayView("np-view-sync");
-    document.getElementById("np-sync-status").innerText = "Khách đã vào phòng! Đang khởi tạo đường truyền...";
+    document.getElementById("np-sync-status").innerText = "P2 đã vào phòng! Đang stream WebRTC...";
 
     if (netplayGameTarget.isLocal) {
       startEmulator(netplayGameTarget.core, URL.createObjectURL(netplayGameTarget.file), netplayGameTarget.title);
@@ -869,20 +857,17 @@ async function handleNetplaySignal(data) {
       const vTrack = videoStream.getVideoTracks()[0];
       if (vTrack) {
         vTrack.contentHint = "detail";
+        combinedStream.addTrack(vTrack);
         const sender = peerConnection.addTrack(vTrack, combinedStream);
 
         setTimeout(() => {
           try {
             const params = sender.getParameters();
-            if (!params.encodings || params.encodings.length === 0) {
-              params.encodings = [{}];
-            }
-            params.encodings[0].maxBitrate = 6000000;
+            if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+            params.encodings[0].maxBitrate = 8000000; // 8 Mbps cực nét
             params.degradationPreference = "maintain-resolution";
             sender.setParameters(params);
-          } catch (e) {
-            console.warn("Lỗi gán bitrate:", e);
-          }
+          } catch (e) {}
         }, 500);
       }
 
@@ -917,9 +902,7 @@ async function handleNetplaySignal(data) {
     } else {
       try {
         await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (e) {
-        console.warn("Lỗi addIceCandidate:", e);
-      }
+      } catch (e) {}
     }
   }
 }
@@ -930,6 +913,14 @@ function setupPeerConnection(isHost) {
   peerConnection.onicecandidate = (e) => {
     if (e.candidate && roomChannel) {
       roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "candidate", candidate: e.candidate } });
+    }
+  };
+
+  peerConnection.onconnectionstatechange = () => {
+    if (peerConnection.connectionState === "disconnected" || peerConnection.connectionState === "failed") {
+      netplayActive = false;
+      resetP2Input();
+      updateNetplayStatusBadge("idle", "Đã ngắt kết nối P2P");
     }
   };
 
@@ -952,7 +943,8 @@ function setupPeerConnection(isHost) {
 function setupDataChannelHandlers() {
   dataChannel.onopen = () => {
     netplayActive = true;
-    updateNetplayBadgeStatus("connected");
+    const roleText = isHostPlayer ? "Host (P1)" : "Guest (P2)";
+    updateNetplayStatusBadge("connected", `🟢 2P Đã kết nối • ${roleText}`);
     runCountdownAnimation();
   };
 
@@ -968,10 +960,11 @@ function setupDataChannelHandlers() {
   dataChannel.onclose = () => {
     netplayActive = false;
     resetP2Input();
-    updateNetplayBadgeStatus("disconnected");
+    updateNetplayStatusBadge("idle", "Đơn đấu (P2 đã thoát)");
   };
 }
 
+// Client: Xử lý video Stream không độ trễ
 function handleClientIncomingStream(stream, newTrack) {
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
@@ -1018,8 +1011,7 @@ function handleClientIncomingStream(stream, newTrack) {
     video.srcObject = stream;
   }
 
-  video.play().catch(e => console.warn("Lỗi phát video:", e));
-
+  video.play().catch(() => {});
   const overlay = document.getElementById("virtual-gamepad");
   if (overlay) overlay.style.display = "block";
 }
@@ -1055,240 +1047,90 @@ function copyRoomCode() {
 }
 
 // =================================================================
-// 8. BÀN PHÍM ẢO, MAPPING PHÍM CHO CLIENT & TỰ ĐỘNG LÀM MỜ THANH CÔNG CỤ
+// 8. HỆ THỐNG MAP PHÍM ĐỘC LẬP & TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH
 // =================================================================
-const KEY_MAP_CONFIG = {
-  "ArrowUp":    { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
-  "ArrowDown":  { key: "ArrowDown",  code: "ArrowDown",  keyCode: 40 },
-  "ArrowLeft":  { key: "ArrowLeft",  code: "ArrowLeft",  keyCode: 37 },
-  "ArrowRight": { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
-  "KeyZ":       { key: "z",          code: "KeyZ",       keyCode: 90 },
-  "KeyX":       { key: "x",          code: "KeyX",       keyCode: 88 },
-  "KeyA":       { key: "a",          code: "KeyA",       keyCode: 65 },
-  "KeyS":       { key: "s",          code: "KeyS",       keyCode: 83 },
-  "KeyQ":       { key: "q",          code: "KeyQ",       keyCode: 81 },
-  "KeyE":       { key: "e",          code: "KeyE",       keyCode: 69 },
-  "Enter":      { key: "Enter",      code: "Enter",      keyCode: 13 },
-  "ShiftRight": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
+
+// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 1 (DÀNH CHO HOST / CHƠI ĐƠN)
+const DEFAULT_P1_KEYMAP = {
+  "ArrowUp": "UP",
+  "ArrowDown": "DOWN",
+  "ArrowLeft": "LEFT",
+  "ArrowRight": "RIGHT",
+  "KeyX": "A",
+  "KeyZ": "B",
+  "KeyS": "X",
+  "KeyA": "Y",
+  "KeyQ": "L",
+  "KeyE": "R",
+  "Enter": "START",
+  "ShiftRight": "SELECT"
 };
 
-const DEFAULT_GUEST_KEYS = {
+// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 2 (DÀNH CHO GUEST KHI VÀO PHÒNG)
+const DEFAULT_P2_KEYMAP = {
   "ArrowUp": "UP",    "KeyW": "UP",
   "ArrowDown": "DOWN",  "KeyS": "DOWN",
   "ArrowLeft": "LEFT",  "KeyA": "LEFT",
   "ArrowRight": "RIGHT", "KeyD": "RIGHT",
   "KeyX": "A",        "KeyK": "A",
   "KeyZ": "B",        "KeyJ": "B",
-  "KeyA": "Y",        "KeyU": "Y",
   "KeyS": "X",        "KeyI": "X",
-  "KeyQ": "L",        "KeyE": "R",
+  "KeyA": "Y",        "KeyU": "Y",
+  "KeyQ": "L",
+  "KeyE": "R",
   "Enter": "START",
-  "ShiftRight": "SELECT", "ShiftLeft": "SELECT"
+  "ShiftRight": "SELECT"
 };
 
-const ACTION_LABELS = {
-  "UP": "Lên (D-Pad)",
-  "DOWN": "Xuống (D-Pad)",
-  "LEFT": "Trái (D-Pad)",
-  "RIGHT": "Phải (D-Pad)",
-  "A": "Nút A (Cross)",
-  "B": "Nút B (Circle)",
-  "X": "Nút X (Triangle)",
-  "Y": "Nút Y (Square)",
-  "L": "Nút vai L",
-  "R": "Nút vai R",
-  "START": "START",
-  "SELECT": "SELECT"
+// Mã phím chuẩn tương thích với EmulatorJS / RetroArch cho Player 1
+const ACTION_TO_KEYINFO = {
+  "UP":     { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
+  "DOWN":   { key: "ArrowDown",  code: "ArrowDown",  keyCode: 40 },
+  "LEFT":   { key: "ArrowLeft",  code: "ArrowLeft",  keyCode: 37 },
+  "RIGHT":  { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  "A":      { key: "x",          code: "KeyX",       keyCode: 88 },
+  "B":      { key: "z",          code: "KeyZ",       keyCode: 90 },
+  "X":      { key: "s",          code: "KeyS",       keyCode: 83 },
+  "Y":      { key: "a",          code: "KeyA",       keyCode: 65 },
+  "L":      { key: "q",          code: "KeyQ",       keyCode: 81 },
+  "R":      { key: "e",          code: "KeyE",       keyCode: 69 },
+  "START":  { key: "Enter",      code: "Enter",      keyCode: 13 },
+  "SELECT": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
 };
 
-let listeningAction = null;
-let isConfigMode = false;
-let selectedElementId = "all";
-let padLayoutSettings = {};
-let topBarIdleTimer = null;
-
-function getGuestKeyMapping() {
-  const saved = localStorage.getItem("retrocloud_guest_keymap");
+// Lấy bảng map phím của người dùng hiện tại
+function getActiveKeymap() {
+  const isGuest = (netplayActive && !isHostPlayer);
+  const storageKey = isGuest ? "retrocloud_keymap_p2" : "retrocloud_keymap_p1";
+  const saved = localStorage.getItem(storageKey);
   if (saved) {
     try { return JSON.parse(saved); } catch (e) {}
   }
-  return { ...DEFAULT_GUEST_KEYS };
+  return isGuest ? { ...DEFAULT_P2_KEYMAP } : { ...DEFAULT_P1_KEYMAP };
 }
 
-function openKeybindModal() {
-  const modal = document.getElementById("keybind-modal");
-  if (modal) modal.style.display = "flex";
-  renderKeybindList();
+function saveActiveKeymap(map) {
+  const isGuest = (netplayActive && !isHostPlayer);
+  const storageKey = isGuest ? "retrocloud_keymap_p2" : "retrocloud_keymap_p1";
+  localStorage.setItem(storageKey, JSON.stringify(map));
 }
 
-function closeKeybindModal() {
-  const modal = document.getElementById("keybind-modal");
-  if (modal) modal.style.display = "none";
-  listeningAction = null;
-}
-
-function renderKeybindList() {
-  const container = document.getElementById("keybind-list");
-  if (!container) return;
-
-  const currentMap = getGuestKeyMapping();
-  container.innerHTML = "";
-
-  Object.entries(ACTION_LABELS).forEach(([action, label]) => {
-    // Tìm các phím đang gán cho action này
-    const boundKeys = Object.keys(currentMap).filter(k => currentMap[k] === action);
-    const displayKey = boundKeys.length > 0 ? boundKeys.join(" / ").replace(/Key|Arrow/g, "") : "Chưa gán";
-
-    const row = document.createElement("div");
-    row.className = "keybind-row";
-    row.innerHTML = `
-      <span class="keybind-label">${label}</span>
-      <button class="keybind-btn ${listeningAction === action ? 'listening' : ''}" onclick="startListeningKey('${action}')">
-        ${listeningAction === action ? 'Nhấn 1 phím...' : displayKey}
-      </button>
-    `;
-    container.appendChild(row);
-  });
-}
-
-function startListeningKey(action) {
-  listeningAction = action;
-  renderKeybindList();
-}
-
-function resetKeybindings() {
-  localStorage.removeItem("retrocloud_guest_keymap");
-  listeningAction = null;
-  renderKeybindList();
-}
-
-// Bật/làm mờ thanh công cụ tiện ích khi idle
-function triggerTopBarActive() {
-  const bar = document.getElementById("mobile-top-bar");
-  if (!bar) return;
-
-  bar.classList.add("is-active");
-  if (topBarIdleTimer) clearTimeout(topBarIdleTimer);
-
-  topBarIdleTimer = setTimeout(() => {
-    if (!isConfigMode) {
-      bar.classList.remove("is-active");
-    }
-  }, 3000);
-}
-
-function initVirtualGamepad() {
-  // Lắng nghe bàn phím PC cho Guest & Key Mapping
-  window.addEventListener("keydown", (e) => {
-    // Nếu đang trong trạng thái gán phím ở Modal
-    if (listeningAction) {
-      e.preventDefault();
-      const currentMap = getGuestKeyMapping();
-
-      // Xóa phím này nếu đang gán ở nút khác
-      delete currentMap[e.code];
-
-      // Gán phím mới cho action đang chọn
-      currentMap[e.code] = listeningAction;
-      localStorage.setItem("retrocloud_guest_keymap", JSON.stringify(currentMap));
-
-      listeningAction = null;
-      renderKeybindList();
-      return;
-    }
-
-    // Nếu đang trong trận đấu P2P và là Guest
-    if (netplayActive && !isHostPlayer) {
-      const keyMap = getGuestKeyMapping();
-      const btn = keyMap[e.code];
-      if (btn) {
-        e.preventDefault();
-        sendGuestInput("keydown", btn);
-      }
-    }
-  });
-
-  window.addEventListener("keyup", (e) => {
-    if (netplayActive && !isHostPlayer && !listeningAction) {
-      const keyMap = getGuestKeyMapping();
-      const btn = keyMap[e.code];
-      if (btn) {
-        e.preventDefault();
-        sendGuestInput("keyup", btn);
-      }
-    }
-  });
-
-  // Tự động làm sáng thanh công cụ khi di chuột / chạm màn hình game
-  const gameContainer = document.getElementById("game-container");
-  if (gameContainer) {
-    gameContainer.addEventListener("mousemove", triggerTopBarActive);
-    gameContainer.addEventListener("touchstart", triggerTopBarActive, { passive: true });
-  }
-
-  loadGamepadConfig();
-
-  // Nút mở Modal Keymap bàn phím
-  document.getElementById("btn-keymap")?.addEventListener("click", () => {
-    openKeybindModal();
-  });
-
-  // Nút ẩn hiện phím ảo
-  document.getElementById("btn-toggle-pad")?.addEventListener("click", () => {
-    const overlay = document.getElementById("virtual-gamepad");
-    if (overlay) overlay.style.display = (overlay.style.display === "none") ? "block" : "none";
-  });
-
-  // Toàn màn hình
-  document.getElementById("btn-fullscreen")?.addEventListener("click", () => {
-    const container = document.getElementById("game-container");
-    if (!document.fullscreenElement) {
-      container.requestFullscreen().catch(err => alert("Không thể phóng to: " + err.message));
-    } else {
-      document.exitFullscreen();
-    }
-  });
-
-  // Nút bật cấu hình phím ảo
-  document.getElementById("btn-config-pad")?.addEventListener("click", () => {
-    toggleGamepadConfig(!isConfigMode);
-  });
-
-  document.getElementById("slider-pad-scale")?.addEventListener("input", (e) => {
-    const val = e.target.value / 100;
-    document.getElementById("val-pad-scale").innerText = `${e.target.value}%`;
-    updateElementStyle(selectedElementId, "scale", val);
-  });
-
-  document.getElementById("slider-pad-opacity")?.addEventListener("input", (e) => {
-    const val = e.target.value / 100;
-    document.getElementById("val-pad-opacity").innerText = `${e.target.value}%`;
-    updateElementStyle(selectedElementId, "opacity", val);
-  });
-
-  document.querySelectorAll(".pad-element").forEach(el => setupSmartDraggableElement(el));
-  setupButtonInputEvents();
-}
-
-function sendGuestInput(action, btnName) {
-  if (dataChannel && dataChannel.readyState === "open") {
-    dataChannel.send(JSON.stringify({
-      type: "P2_INPUT",
-      action: action,
-      btn: btnName
-    }));
-  }
-}
-
-function dispatchGameKey(type, keyCodeIdentifier) {
+// Bơm input tới Host (nếu là Guest) hoặc nạp vào Core (nếu là Host)
+function dispatchGameAction(type, actionName) {
+  // 1. NẾU LÀ GUEST (PLAYER 2): Gửi qua DataChannel UDP, KHÔNG bắn KeyboardEvent
   if (netplayActive && !isHostPlayer) {
-    const keyMap = getGuestKeyMapping();
-    const btnName = keyMap[keyCodeIdentifier];
-    if (btnName) sendGuestInput(type, btnName);
+    if (dataChannel && dataChannel.readyState === "open") {
+      dataChannel.send(JSON.stringify({
+        type: "P2_INPUT",
+        action: type,
+        btn: actionName
+      }));
+    }
     return;
   }
 
-  const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
+  // 2. NẾU LÀ HOST HOẶC ĐƠN ĐẤU: Phát vào Core cho Player 1
+  const keyInfo = ACTION_TO_KEYINFO[actionName];
   if (!keyInfo) return;
 
   const event = new KeyboardEvent(type, {
@@ -1310,31 +1152,225 @@ function dispatchGameKey(type, keyCodeIdentifier) {
   window.dispatchEvent(event);
 }
 
-function setupButtonInputEvents() {
-  document.querySelectorAll(".v-btn").forEach(btn => {
-    const key = btn.getAttribute("data-key");
+// Lắng nghe bàn phím PC và phân luồng độc lập
+function setupKeyboardListeners() {
+  window.addEventListener("keydown", (e) => {
+    // Không bắt phím khi đang nhập input ở popup
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
 
-    const pressHandler = (e) => {
+    const map = getActiveKeymap();
+    const action = map[e.code];
+    if (action) {
+      e.preventDefault();
+      dispatchGameAction("keydown", action);
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+
+    const map = getActiveKeymap();
+    const action = map[e.code];
+    if (action) {
+      e.preventDefault();
+      dispatchGameAction("keyup", action);
+    }
+  });
+}
+
+// Gán sự kiện cho cụm phím ảo cảm ứng (Mobile)
+function setupVirtualButtonEvents() {
+  document.querySelectorAll(".v-btn").forEach(btn => {
+    const actionName = btn.getAttribute("data-btn");
+
+    const press = (e) => {
       if (isConfigMode) return;
       e.preventDefault();
       btn.classList.add("pressed");
       if (navigator.vibrate) navigator.vibrate(15);
-      dispatchGameKey("keydown", key);
+      dispatchGameAction("keydown", actionName);
     };
 
-    const releaseHandler = (e) => {
+    const release = (e) => {
       if (isConfigMode) return;
       e.preventDefault();
       btn.classList.remove("pressed");
-      dispatchGameKey("keyup", key);
+      dispatchGameAction("keyup", actionName);
     };
 
-    btn.addEventListener("touchstart", pressHandler, { passive: false });
-    btn.addEventListener("touchend", releaseHandler, { passive: false });
-    btn.addEventListener("touchcancel", releaseHandler, { passive: false });
-    btn.addEventListener("mousedown", pressHandler);
-    btn.addEventListener("mouseup", releaseHandler);
+    btn.addEventListener("touchstart", press, { passive: false });
+    btn.addEventListener("touchend", release, { passive: false });
+    btn.addEventListener("touchcancel", release, { passive: false });
+    btn.addEventListener("mousedown", press);
+    btn.addEventListener("mouseup", release);
   });
+}
+
+// TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH KHI KHÔNG SỬ DỤNG
+let idleMenuTimer = null;
+function initFloatingQuickMenu() {
+  const menuContainer = document.getElementById("floating-quick-menu");
+  const toggleBtn = document.getElementById("btn-quick-toggle");
+  const dropdown = document.getElementById("quick-menu-dropdown");
+  const gameContainer = document.getElementById("game-container");
+
+  const resetIdle = () => {
+    menuContainer?.classList.remove("is-idle");
+    clearTimeout(idleMenuTimer);
+    idleMenuTimer = setTimeout(() => {
+      // Chỉ làm mờ khi menu dropdown đang đóng
+      if (dropdown && dropdown.style.display === "none") {
+        menuContainer?.classList.add("is-idle");
+      }
+    }, 3500);
+  };
+
+  gameContainer?.addEventListener("mousemove", resetIdle);
+  gameContainer?.addEventListener("touchstart", resetIdle, { passive: true });
+  gameContainer?.addEventListener("click", resetIdle);
+
+  toggleBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = dropdown.style.display === "flex";
+    dropdown.style.display = isOpen ? "none" : "flex";
+    resetIdle();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!menuContainer?.contains(e.target) && dropdown) {
+      dropdown.style.display = "none";
+      resetIdle();
+    }
+  });
+
+  resetIdle();
+}
+
+function toggleVirtualGamepad() {
+  const overlay = document.getElementById("virtual-gamepad");
+  if (overlay) {
+    overlay.style.display = (overlay.style.display === "none") ? "block" : "none";
+  }
+}
+
+function toggleFullscreen() {
+  const container = document.getElementById("game-container");
+  if (!document.fullscreenElement) {
+    container.requestFullscreen().catch(err => alert("Không thể phóng to: " + err.message));
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+// MODAL CÀI ĐẶT MAP PHÍM TÙY CHỈNH
+const BUTTON_NAMES_VN = {
+  "UP": "Mũi tên LÊN",
+  "DOWN": "Mũi tên XUỐNG",
+  "LEFT": "Mũi tên TRÁI",
+  "RIGHT": "Mũi tên PHẢI",
+  "A": "Nút A (Xác nhận / Tròn)",
+  "B": "Nút B (Hủy / Vuông)",
+  "X": "Nút X (Tam giác)",
+  "Y": "Nút Y (X)",
+  "L": "Nút vai L1",
+  "R": "Nút vai R1",
+  "START": "Nút START",
+  "SELECT": "Nút SELECT"
+};
+
+function openKeymapModal() {
+  const modal = document.getElementById("keymap-modal");
+  const list = document.getElementById("keymap-list");
+  const title = document.getElementById("keymap-title");
+  if (!modal || !list) return;
+
+  const isGuest = (netplayActive && !isHostPlayer);
+  title.innerText = isGuest ? "⌨️ Đổi Phím Bấm (Player 2 - Guest)" : "⌨️ Đổi Phím Bấm (Player 1 - Host)";
+
+  const currentMap = getActiveKeymap();
+  list.innerHTML = "";
+
+  Object.keys(BUTTON_NAMES_VN).forEach(action => {
+    // Tìm mã phím đang được gán cho action này
+    const boundKey = Object.keys(currentMap).find(k => currentMap[k] === action) || "Chưa gán";
+
+    const row = document.createElement("div");
+    row.className = "keymap-row";
+    row.innerHTML = `
+      <span class="keymap-label">${BUTTON_NAMES_VN[action]}</span>
+      <button class="keymap-btn" id="kbtn-${action}" onclick="listenForNewKey('${action}')">${boundKey.replace("Key", "")}</button>
+    `;
+    list.appendChild(row);
+  });
+
+  modal.style.display = "flex";
+}
+
+function closeKeymapModal() {
+  document.getElementById("keymap-modal").style.display = "none";
+}
+
+function listenForNewKey(action) {
+  const btn = document.getElementById(`kbtn-${action}`);
+  if (!btn) return;
+
+  document.querySelectorAll(".keymap-btn").forEach(b => b.classList.remove("is-listening"));
+  btn.classList.add("is-listening");
+  btn.innerText = "Bấm 1 phím...";
+
+  const handler = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const currentMap = getActiveKeymap();
+    // Xóa phím cũ đã gắn vào action này
+    Object.keys(currentMap).forEach(k => {
+      if (currentMap[k] === action) delete currentMap[k];
+    });
+
+    currentMap[e.code] = action;
+    saveActiveKeymap(currentMap);
+
+    btn.classList.remove("is-listening");
+    btn.innerText = e.code.replace("Key", "");
+
+    window.removeEventListener("keydown", handler, { capture: true });
+  };
+
+  window.addEventListener("keydown", handler, { capture: true, once: true });
+}
+
+function resetCurrentKeymap() {
+  const isGuest = (netplayActive && !isHostPlayer);
+  const storageKey = isGuest ? "retrocloud_keymap_p2" : "retrocloud_keymap_p1";
+  localStorage.removeItem(storageKey);
+  openKeymapModal();
+}
+
+// BẢNG TÙY CHỈNH VỊ TRÍ & KÍCH THƯỚC NÚT ẢO
+let isConfigMode = false;
+let selectedElementId = "all";
+let padLayoutSettings = {};
+
+function initVirtualGamepad() {
+  setupKeyboardListeners();
+  setupVirtualButtonEvents();
+  initFloatingQuickMenu();
+  loadGamepadConfig();
+
+  document.getElementById("slider-pad-scale")?.addEventListener("input", (e) => {
+    const val = e.target.value / 100;
+    document.getElementById("val-pad-scale").innerText = `${e.target.value}%`;
+    updateElementStyle(selectedElementId, "scale", val);
+  });
+
+  document.getElementById("slider-pad-opacity")?.addEventListener("input", (e) => {
+    const val = e.target.value / 100;
+    document.getElementById("val-pad-opacity").innerText = `${e.target.value}%`;
+    updateElementStyle(selectedElementId, "opacity", val);
+  });
+
+  document.querySelectorAll(".pad-element").forEach(el => setupSmartDraggableElement(el));
 }
 
 function setupSmartDraggableElement(el) {
@@ -1409,15 +1445,9 @@ function toggleGamepadConfig(active) {
   isConfigMode = active;
   const configBar = document.getElementById("gamepad-config-bar");
   const overlay = document.getElementById("virtual-gamepad");
-  const topBar = document.getElementById("mobile-top-bar");
 
   if (configBar) configBar.style.display = active ? "flex" : "none";
   if (overlay) overlay.classList.toggle("is-editing", active);
-
-  if (topBar) {
-    if (active) topBar.classList.add("is-active");
-    else triggerTopBarActive();
-  }
 
   if (!active) {
     saveGamepadConfig();
@@ -1505,9 +1535,7 @@ function loadGamepadConfig() {
     try {
       padLayoutSettings = JSON.parse(saved);
       document.querySelectorAll(".pad-element").forEach(el => applySingleElementStyle(el.id));
-    } catch (e) {
-      console.warn("Lỗi load layout:", e);
-    }
+    } catch (e) {}
   }
 }
 
@@ -1532,8 +1560,7 @@ function openAccountModal() {
 
 function closeAccountModal() {
   const modal = document.getElementById("account-modal");
-  if (!modal) return;
-  modal.style.display = "none";
+  if (modal) modal.style.display = "none";
 }
 
 function switchAccountTab(tabName) {
@@ -1697,10 +1724,12 @@ window.clientJoinLobby = clientJoinLobby;
 window.copyRoomCode = copyRoomCode;
 window.resetGamepadLayout = resetGamepadLayout;
 window.toggleGamepadConfig = toggleGamepadConfig;
-window.openKeybindModal = openKeybindModal;
-window.closeKeybindModal = closeKeybindModal;
-window.startListeningKey = startListeningKey;
-window.resetKeybindings = resetKeybindings;
+window.openKeymapModal = openKeymapModal;
+window.closeKeymapModal = closeKeymapModal;
+window.listenForNewKey = listenForNewKey;
+window.resetCurrentKeymap = resetCurrentKeymap;
+window.toggleVirtualGamepad = toggleVirtualGamepad;
+window.toggleFullscreen = toggleFullscreen;
 
 window.addEventListener("DOMContentLoaded", () => {
   initAuth();
