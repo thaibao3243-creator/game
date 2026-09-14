@@ -24,19 +24,19 @@
     <section id="emulator-section">
       <div id="game-container">
 
-        <!-- 1. BADGE TRẠNG THÁI KẾT NỐI NETPLAY 2P THỜI GIAN THỰC -->
+        <!-- 1. BADGE TRẠNG THÁI NETPLAY 2P THỜI GIAN THỰC -->
         <div id="netplay-status-badge" class="netplay-status-badge status-idle">
           <span class="status-indicator"></span>
           <span id="netplay-status-text">Đơn đấu</span>
         </div>
 
-        <!-- 2. NÚT ĐIỀU KHIỂN NỔI GOM GỌN (TỰ ĐỘNG MỜ KHI RẢNH) -->
+        <!-- 2. NÚT ĐIỀU KHIỂN NỔI GOM GỌN (TỰ LÀM MỜ KHI RẢNH) -->
         <div id="floating-quick-menu" class="floating-quick-menu is-idle">
-          <button id="btn-quick-toggle" class="fab-icon-btn" title="Cài đặt nhanh">⚙️</button>
+          <button id="btn-quick-toggle" class="fab-icon-btn" title="Menu cài đặt">⚙️</button>
           <div id="quick-menu-dropdown" class="quick-menu-dropdown" style="display: none;">
-            <button class="menu-item-btn" onclick="openKeymapModal()">⌨️ Đổi phím bàn phím</button>
-            <button class="menu-item-btn" onclick="toggleVirtualGamepad()">🎮 Ẩn/Hiện phím ảo</button>
-            <button class="menu-item-btn" onclick="toggleGamepadConfig(true)">📐 Chỉnh vị trí & cỡ phím</button>
+            <button class="menu-item-btn" onclick="openKeymapModal()">⌨️ Đổi phím (Phím cứng & Phím ảo)</button>
+            <button class="menu-item-btn" onclick="toggleVirtualGamepad()">🎮 Ẩn / Hiện phím ảo</button>
+            <button class="menu-item-btn" onclick="toggleGamepadConfig(true)">📐 Kéo thả & Đổi cỡ phím ảo</button>
             <button class="menu-item-btn" onclick="toggleFullscreen()">⛶ Toàn màn hình</button>
           </div>
         </div>
@@ -56,39 +56,39 @@
           </div>
         </div>
 
-        <!-- 5. KHUNG RENDER CHÍNH (CANVAS CỦA HOST HOẶC VIDEO ZERO-DELAY CỦA CLIENT) -->
+        <!-- 5. KHUNG RENDER CHÍNH (CANVAS CỦA HOST HOẶC VIDEO CỦA CLIENT) -->
         <div id="game"></div>
 
         <!-- 6. PHÍM ẢO CẢM ỨNG ĐỘC LẬP NEO 4 GÓC -->
         <div id="virtual-gamepad" class="gamepad-overlay">
-          <div id="pad-l" class="pad-element" data-btn="L" data-name="Nút vai L">
-            <button class="v-btn v-btn-shoulder" data-btn="L">L</button>
+          <div id="pad-l" class="pad-element" data-pad-btn="L" data-name="Nút vai L">
+            <button class="v-btn v-btn-shoulder" data-pad-btn="L">L</button>
           </div>
-          <div id="pad-r" class="pad-element" data-btn="R" data-name="Nút vai R">
-            <button class="v-btn v-btn-shoulder" data-btn="R">R</button>
+          <div id="pad-r" class="pad-element" data-pad-btn="R" data-name="Nút vai R">
+            <button class="v-btn v-btn-shoulder" data-pad-btn="R">R</button>
           </div>
           <div id="pad-dpad" class="pad-element dpad-cluster" data-name="Cụm D-Pad">
-            <button class="v-btn dpad-btn up" data-btn="UP">▲</button>
-            <button class="v-btn dpad-btn left" data-btn="LEFT">◀</button>
+            <button class="v-btn dpad-btn up" data-pad-btn="UP">▲</button>
+            <button class="v-btn dpad-btn left" data-pad-btn="LEFT">◀</button>
             <div class="dpad-center"></div>
-            <button class="v-btn dpad-btn right" data-btn="RIGHT">▶</button>
-            <button class="v-btn dpad-btn down" data-btn="DOWN">▼</button>
+            <button class="v-btn dpad-btn right" data-pad-btn="RIGHT">▶</button>
+            <button class="v-btn dpad-btn down" data-pad-btn="DOWN">▼</button>
           </div>
-          <div id="pad-select" class="pad-element" data-btn="SELECT" data-name="Nút SELECT">
-            <button class="v-btn v-btn-pill" data-btn="SELECT">SELECT</button>
+          <div id="pad-select" class="pad-element" data-pad-btn="SELECT" data-name="Nút SELECT">
+            <button class="v-btn v-btn-pill" data-pad-btn="SELECT">SELECT</button>
           </div>
-          <div id="pad-start" class="pad-element" data-btn="START" data-name="Nút START">
-            <button class="v-btn v-btn-pill" data-btn="START">START</button>
+          <div id="pad-start" class="pad-element" data-pad-btn="START" data-name="Nút START">
+            <button class="v-btn v-btn-pill" data-pad-btn="START">START</button>
           </div>
           <div id="pad-actions" class="pad-element action-cluster" data-name="Cụm nút A/B/X/Y">
-            <button class="v-btn action-btn x" data-btn="X">X</button>
-            <button class="v-btn action-btn y" data-btn="Y">Y</button>
-            <button class="v-btn action-btn b" data-btn="B">B</button>
-            <button class="v-btn action-btn a" data-btn="A">A</button>
+            <button class="v-btn action-btn x" data-pad-btn="X" id="vbtn-x">X</button>
+            <button class="v-btn action-btn y" data-pad-btn="Y" id="vbtn-y">Y</button>
+            <button class="v-btn action-btn b" data-pad-btn="B" id="vbtn-b">B</button>
+            <button class="v-btn action-btn a" data-pad-btn="A" id="vbtn-a">A</button>
           </div>
         </div>
 
-        <!-- 7. BẢNG CHỈNH KÍCH THƯỚC / ĐỘ MỜ / VỊ TRÍ PHÍM ẢO -->
+        <!-- 7. BẢNG CẤU HÌNH VỊ TRÍ & KÍCH THƯỚC PHÍM ẢO -->
         <div id="gamepad-config-bar" class="gamepad-config-bar" style="display: none;">
           <div class="config-header">
             <span>Đang chọn: <strong id="cfg-target-name">Toàn bộ phím</strong></span>
@@ -164,16 +164,36 @@
     </section>
   </main>
 
-  <!-- MODAL MAP PHÍM BÀN PHÍM ĐỘC LẬP (KEYBOARD REMAPPING) -->
+  <!-- MODAL MAP PHÍM ĐỘC LẬP (KEYBOARD & VIRTUAL GAMEPAD) -->
   <div id="keymap-modal" class="modal-overlay" style="display:none;">
     <div class="modal-box keymap-modal-box">
       <div class="modal-header">
         <h3 id="keymap-title">⌨️ Cài Đặt Phím Bấm</h3>
         <button class="btn-close" onclick="closeKeymapModal()">✕</button>
       </div>
-      <p class="tab-desc">Chạm vào nút cần đổi rồi nhấn một phím bất kỳ trên bàn phím. Lưu riêng cho từng máy, không sợ trùng nhau.</p>
-      <div class="keymap-grid" id="keymap-list"></div>
-      <div class="modal-actions-row" style="margin-top: 1rem;">
+      
+      <!-- Tabs chuyển đổi giữa bàn phím và phím ảo -->
+      <div class="tab-nav">
+        <button class="tab-btn active" id="tab-btn-kb" onclick="switchKeymapTab('keyboard')">Bàn Phím PC</button>
+        <button class="tab-btn" id="tab-btn-vpad" onclick="switchKeymapTab('vpad')">Layout Phím Ảo</button>
+      </div>
+
+      <!-- Tab 1: Phím cứng PC -->
+      <div id="keymap-tab-kb" class="tab-content active">
+        <p class="tab-desc">Chạm vào nút cần đổi rồi nhấn phím trên bàn phím. Cài đặt lưu riêng cho từng máy:</p>
+        <div class="keymap-grid" id="keymap-list"></div>
+      </div>
+
+      <!-- Tab 2: Phím ảo cảm ứng -->
+      <div id="keymap-tab-vpad" class="tab-content">
+        <p class="tab-desc">Chọn sơ đồ nút bấm hành động hiển thị trên màn hình cảm ứng:</p>
+        <div class="vpad-preset-group">
+          <button class="btn btn-secondary w-100" onclick="applyVirtualPadPreset('nintendo')">Layout Nintendo (A Phải, B Dưới, X Trên, Y Trái)</button>
+          <button class="btn btn-secondary w-100" style="margin-top: 8px;" onclick="applyVirtualPadPreset('xbox')">Layout Xbox / PlayStation (A Dưới, B Phải, X Trái, Y Trên)</button>
+        </div>
+      </div>
+
+      <div class="modal-actions-row" style="margin-top: 1.2rem;">
         <button class="btn btn-outline" onclick="resetCurrentKeymap()">Khôi phục mặc định</button>
         <button class="btn btn-primary" onclick="closeKeymapModal()">Hoàn tất</button>
       </div>

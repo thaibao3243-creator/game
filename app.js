@@ -7,12 +7,15 @@ if (OrigAudioContext) {
   const origConnect = AudioNode.prototype.connect;
   AudioNode.prototype.connect = function(destination, ...args) {
     try {
-      if (destination instanceof AudioDestinationNode && this.context) {
-        if (!this.context.__netplayDest) {
-          this.context.__netplayDest = this.context.createMediaStreamDestination();
-          netplayAudioStream = this.context.__netplayDest.stream;
+      if (destination && this.context) {
+        const isDest = (destination instanceof AudioDestinationNode) || (destination === this.context.destination);
+        if (isDest) {
+          if (!this.context.__netplayDest) {
+            this.context.__netplayDest = this.context.createMediaStreamDestination();
+            netplayAudioStream = this.context.__netplayDest.stream;
+          }
+          origConnect.call(this, this.context.__netplayDest);
         }
-        origConnect.call(this, this.context.__netplayDest);
       }
     } catch (e) {}
     return origConnect.call(this, destination, ...args);
@@ -20,7 +23,7 @@ if (OrigAudioContext) {
 }
 
 // =================================================================
-// 1. CẤU HÌNH SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
+// 1. SUPABASE CLIENT & TRẠNG THÁI TOÀN CỤC
 // =================================================================
 const SUPABASE_URL = "https://kmypjbgjvkkbmyaomhrt.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtteXBqYmdqdmtrYm15YW9taHJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyOTQxMjgsImV4cCI6MjEwNDg3MDEyOH0.LehadH5EP9rtre0Ielz4U3kuQ8wE6rZMw_yjg6iS_kw";
@@ -32,7 +35,7 @@ let userProfile = null;
 let currentGame = { id: null, title: null, core: null, isLocal: false };
 
 // =================================================================
-// 2. KHỞI CHẠY EMULATORJS & NẠP STREAM TIẾN TRÌNH
+// 2. KHỞI CHẠY EMULATORJS & TIẾN TRÌNH TẢI
 // =================================================================
 async function fetchWithProgress(url, onProgress) {
   const response = await fetch(url);
@@ -543,6 +546,7 @@ let netplayActive = false;
 let currentLobbyCode = null;
 let netplayGameTarget = null;
 let iceCandidateQueue = [];
+let clientMediaStream = null;
 
 const rtcConfig = {
   iceServers: [
@@ -551,7 +555,7 @@ const rtcConfig = {
   ]
 };
 
-// CẬP NHẬT TRẠNG THÁI NETPLAY THỜI GIAN THỰC LÊN MÀN HÌNH
+// CẬP NHẬT BADGE TRẠNG THÁI THỜI GIAN THỰC
 function updateNetplayStatusBadge(state, text) {
   const badge = document.getElementById("netplay-status-badge");
   const txt = document.getElementById("netplay-status-text");
@@ -561,7 +565,7 @@ function updateNetplayStatusBadge(state, text) {
   txt.innerText = text;
 }
 
-// GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 TRÊN MÁY HOST (W3C STANDARD)
+// GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 (W3C STANDARD)
 const virtualP2Buttons = Array.from({ length: 17 }, () => ({
   pressed: false,
   touched: false,
@@ -579,12 +583,13 @@ const fakeP2Gamepad = {
   buttons: virtualP2Buttons
 };
 
-// Hook navigator.getGamepads trên máy Host để EmulatorJS nhận diện P2
+// Hook navigator.getGamepads - chuẩn hóa tránh undefined ở index 0
 const nativeGetGamepads = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : () => [];
 navigator.getGamepads = function() {
   const list = nativeGetGamepads();
   const gamepads = list ? Array.from(list) : [];
   if (isHostPlayer && netplayActive) {
+    while (gamepads.length < 2) gamepads.push(null);
     gamepads[1] = fakeP2Gamepad;
   }
   return gamepads;
@@ -752,8 +757,10 @@ function hostConfirmCreateLobby() {
 
 function cancelNetplayLobby() {
   if (roomChannel) {
-    roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "lobby_closed" } });
-    supabaseClient.removeChannel(roomChannel);
+    try {
+      roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "lobby_closed" } });
+      supabaseClient.removeChannel(roomChannel);
+    } catch (e) {}
     roomChannel = null;
   }
   if (peerConnection) {
@@ -764,6 +771,7 @@ function cancelNetplayLobby() {
   currentLobbyCode = null;
   netplayActive = false;
   iceCandidateQueue = [];
+  clientMediaStream = null;
   resetP2Input();
   updateNetplayStatusBadge("idle", "Đơn đấu");
   switchNetplayView("np-view-select");
@@ -864,7 +872,7 @@ async function handleNetplaySignal(data) {
           try {
             const params = sender.getParameters();
             if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-            params.encodings[0].maxBitrate = 8000000; // 8 Mbps cực nét
+            params.encodings[0].maxBitrate = 8000000;
             params.degradationPreference = "maintain-resolution";
             sender.setParameters(params);
           } catch (e) {}
@@ -897,12 +905,14 @@ async function handleNetplaySignal(data) {
     await flushIceCandidateQueue();
 
   } else if (data.type === "candidate" && peerConnection) {
-    if (!peerConnection.remoteDescription) {
-      iceCandidateQueue.push(data.candidate);
-    } else {
-      try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (e) {}
+    if (data.candidate) {
+      if (!peerConnection.remoteDescription) {
+        iceCandidateQueue.push(data.candidate);
+      } else {
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {}
+      }
     }
   }
 }
@@ -912,7 +922,14 @@ function setupPeerConnection(isHost) {
 
   peerConnection.onicecandidate = (e) => {
     if (e.candidate && roomChannel) {
-      roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "candidate", candidate: e.candidate } });
+      roomChannel.send({
+        type: "broadcast",
+        event: "signal",
+        payload: {
+          type: "candidate",
+          candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate
+        }
+      });
     }
   };
 
@@ -929,8 +946,7 @@ function setupPeerConnection(isHost) {
     setupDataChannelHandlers();
   } else {
     peerConnection.ontrack = (e) => {
-      const stream = e.streams[0] || new MediaStream([e.track]);
-      handleClientIncomingStream(stream, e.track);
+      handleClientIncomingStream(e.track);
     };
 
     peerConnection.ondatachannel = (e) => {
@@ -964,8 +980,8 @@ function setupDataChannelHandlers() {
   };
 }
 
-// Client: Xử lý video Stream không độ trễ
-function handleClientIncomingStream(stream, newTrack) {
+// Client: Xử lý video Stream không độ trễ, chuẩn hóa multi-track
+function handleClientIncomingStream(newTrack) {
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
   const loader = document.getElementById("game-loader");
@@ -992,6 +1008,9 @@ function handleClientIncomingStream(stream, newTrack) {
       video.playoutDelayHint = 0;
     }
 
+    clientMediaStream = new MediaStream();
+    video.srcObject = clientMediaStream;
+
     const unmute = () => {
       if (video) video.muted = false;
       window.removeEventListener("click", unmute);
@@ -1003,12 +1022,8 @@ function handleClientIncomingStream(stream, newTrack) {
     window.addEventListener("keydown", unmute);
   }
 
-  if (video.srcObject) {
-    if (!video.srcObject.getTracks().includes(newTrack)) {
-      video.srcObject.addTrack(newTrack);
-    }
-  } else {
-    video.srcObject = stream;
+  if (clientMediaStream && !clientMediaStream.getTracks().includes(newTrack)) {
+    clientMediaStream.addTrack(newTrack);
   }
 
   video.play().catch(() => {});
@@ -1036,7 +1051,10 @@ function runCountdownAnimation() {
     } else {
       clearInterval(timer);
       document.getElementById("netplay-modal").style.display = "none";
-      if (isHostPlayer) triggerP2GamepadConnected();
+      if (isHostPlayer) {
+        triggerP2GamepadConnected();
+        setTimeout(triggerP2GamepadConnected, 1000);
+      }
     }
   }, 1000);
 }
@@ -1046,11 +1064,20 @@ function copyRoomCode() {
   navigator.clipboard.writeText(currentLobbyCode).then(() => alert("Đã copy: " + currentLobbyCode));
 }
 
+// Clean up kết nối khi reload trang
+window.addEventListener("beforeunload", () => {
+  if (roomChannel) {
+    try {
+      roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "lobby_closed" } });
+    } catch (e) {}
+  }
+});
+
 // =================================================================
-// 8. HỆ THỐNG MAP PHÍM ĐỘC LẬP & TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH
+// 8. HỆ THỐNG MAP PHÍM ĐỘC LẬP & TỰ LÀM MỜ NÚT TIỆN ÍCH
 // =================================================================
 
-// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 1 (DÀNH CHO HOST / CHƠI ĐƠN)
+// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 1 (HOST / SINGLE PLAYER)
 const DEFAULT_P1_KEYMAP = {
   "ArrowUp": "UP",
   "ArrowDown": "DOWN",
@@ -1066,7 +1093,7 @@ const DEFAULT_P1_KEYMAP = {
   "ShiftRight": "SELECT"
 };
 
-// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 2 (DÀNH CHO GUEST KHI VÀO PHÒNG)
+// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 2 (GUEST)
 const DEFAULT_P2_KEYMAP = {
   "ArrowUp": "UP",    "KeyW": "UP",
   "ArrowDown": "DOWN",  "KeyS": "DOWN",
@@ -1082,7 +1109,6 @@ const DEFAULT_P2_KEYMAP = {
   "ShiftRight": "SELECT"
 };
 
-// Mã phím chuẩn tương thích với EmulatorJS / RetroArch cho Player 1
 const ACTION_TO_KEYINFO = {
   "UP":     { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
   "DOWN":   { key: "ArrowDown",  code: "ArrowDown",  keyCode: 40 },
@@ -1098,7 +1124,6 @@ const ACTION_TO_KEYINFO = {
   "SELECT": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
 };
 
-// Lấy bảng map phím của người dùng hiện tại
 function getActiveKeymap() {
   const isGuest = (netplayActive && !isHostPlayer);
   const storageKey = isGuest ? "retrocloud_keymap_p2" : "retrocloud_keymap_p1";
@@ -1117,19 +1142,21 @@ function saveActiveKeymap(map) {
 
 // Bơm input tới Host (nếu là Guest) hoặc nạp vào Core (nếu là Host)
 function dispatchGameAction(type, actionName) {
-  // 1. NẾU LÀ GUEST (PLAYER 2): Gửi qua DataChannel UDP, KHÔNG bắn KeyboardEvent
+  // 1. GUEST (PLAYER 2): Gửi qua DataChannel UDP, không bắn KeyboardEvent
   if (netplayActive && !isHostPlayer) {
     if (dataChannel && dataChannel.readyState === "open") {
-      dataChannel.send(JSON.stringify({
-        type: "P2_INPUT",
-        action: type,
-        btn: actionName
-      }));
+      try {
+        dataChannel.send(JSON.stringify({
+          type: "P2_INPUT",
+          action: type,
+          btn: actionName
+        }));
+      } catch (e) {}
     }
     return;
   }
 
-  // 2. NẾU LÀ HOST HOẶC ĐƠN ĐẤU: Phát vào Core cho Player 1
+  // 2. HOST HOẶC ĐƠN ĐẤU: Phát vào Canvas game cho Player 1
   const keyInfo = ACTION_TO_KEYINFO[actionName];
   if (!keyInfo) return;
 
@@ -1147,55 +1174,91 @@ function dispatchGameAction(type, actionName) {
   Object.defineProperty(event, "which", { get: () => keyInfo.keyCode });
 
   const canvas = document.querySelector("#game canvas") || document.getElementById("game");
-  if (canvas) canvas.dispatchEvent(event);
-  document.dispatchEvent(event);
-  window.dispatchEvent(event);
+  if (canvas) {
+    canvas.dispatchEvent(event);
+  } else {
+    document.dispatchEvent(event);
+  }
 }
 
-// Lắng nghe bàn phím PC và phân luồng độc lập
+// Lắng nghe bàn phím PC cho cả Host và Guest chuẩn xác 100%
 function setupKeyboardListeners() {
   window.addEventListener("keydown", (e) => {
-    // Không bắt phím khi đang nhập input ở popup
+    if (!e.isTrusted) return; // Bỏ qua sự kiện giả lập chống lặp đệ quy
+    if (document.getElementById("keymap-modal")?.style.display === "flex") return;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
 
+    // GUEST (P2): Bắt buộc chặn phím và bắn packet qua WebRTC
+    if (netplayActive && !isHostPlayer) {
+      const map = getActiveKeymap();
+      const action = map[e.code];
+      if (action) {
+        e.preventDefault();
+        dispatchGameAction("keydown", action);
+      }
+      return;
+    }
+
+    // HOST (P1) HOẶC ĐƠN ĐẤU:
     const map = getActiveKeymap();
     const action = map[e.code];
     if (action) {
-      e.preventDefault();
-      dispatchGameAction("keydown", action);
+      const defaultKeyInfo = ACTION_TO_KEYINFO[action];
+      // Nếu phím bấm KHÁC với phím mặc định của EmulatorJS (đã bị remap)
+      // thì mới chặn và tạo sự kiện chuyển đổi
+      if (defaultKeyInfo && e.code !== defaultKeyInfo.code) {
+        e.preventDefault();
+        dispatchGameAction("keydown", action);
+      }
+      // Nếu dùng phím mặc định (Mũi tên, Z, X, Enter...), để trình duyệt 
+      // đưa sự kiện phần cứng gốc trực tiếp vào game để đạt độ nhạy tối đa.
     }
   });
 
   window.addEventListener("keyup", (e) => {
+    if (!e.isTrusted) return;
+    if (document.getElementById("keymap-modal")?.style.display === "flex") return;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+
+    if (netplayActive && !isHostPlayer) {
+      const map = getActiveKeymap();
+      const action = map[e.code];
+      if (action) {
+        e.preventDefault();
+        dispatchGameAction("keyup", action);
+      }
+      return;
+    }
 
     const map = getActiveKeymap();
     const action = map[e.code];
     if (action) {
-      e.preventDefault();
-      dispatchGameAction("keyup", action);
+      const defaultKeyInfo = ACTION_TO_KEYINFO[action];
+      if (defaultKeyInfo && e.code !== defaultKeyInfo.code) {
+        e.preventDefault();
+        dispatchGameAction("keyup", action);
+      }
     }
   });
 }
-
-// Gán sự kiện cho cụm phím ảo cảm ứng (Mobile)
+// Bắt sự kiện phím ảo cảm ứng (Mobile)
 function setupVirtualButtonEvents() {
   document.querySelectorAll(".v-btn").forEach(btn => {
-    const actionName = btn.getAttribute("data-btn");
-
     const press = (e) => {
       if (isConfigMode) return;
       e.preventDefault();
       btn.classList.add("pressed");
       if (navigator.vibrate) navigator.vibrate(15);
-      dispatchGameAction("keydown", actionName);
+      const actionName = btn.getAttribute("data-pad-btn");
+      if (actionName) dispatchGameAction("keydown", actionName);
     };
 
     const release = (e) => {
       if (isConfigMode) return;
       e.preventDefault();
       btn.classList.remove("pressed");
-      dispatchGameAction("keyup", actionName);
+      const actionName = btn.getAttribute("data-pad-btn");
+      if (actionName) dispatchGameAction("keyup", actionName);
     };
 
     btn.addEventListener("touchstart", press, { passive: false });
@@ -1206,7 +1269,7 @@ function setupVirtualButtonEvents() {
   });
 }
 
-// TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH KHI KHÔNG SỬ DỤNG
+// TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH KHI RẢNH
 let idleMenuTimer = null;
 function initFloatingQuickMenu() {
   const menuContainer = document.getElementById("floating-quick-menu");
@@ -1218,7 +1281,6 @@ function initFloatingQuickMenu() {
     menuContainer?.classList.remove("is-idle");
     clearTimeout(idleMenuTimer);
     idleMenuTimer = setTimeout(() => {
-      // Chỉ làm mờ khi menu dropdown đang đóng
       if (dropdown && dropdown.style.display === "none") {
         menuContainer?.classList.add("is-idle");
       }
@@ -1231,7 +1293,7 @@ function initFloatingQuickMenu() {
 
   toggleBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = dropdown.style.display === "flex";
+    const isOpen = (dropdown.style.display === "flex");
     dropdown.style.display = isOpen ? "none" : "flex";
     resetIdle();
   });
@@ -1262,7 +1324,7 @@ function toggleFullscreen() {
   }
 }
 
-// MODAL CÀI ĐẶT MAP PHÍM TÙY CHỈNH
+// MODAL CÀI ĐẶT MAP PHÍM
 const BUTTON_NAMES_VN = {
   "UP": "Mũi tên LÊN",
   "DOWN": "Mũi tên XUỐNG",
@@ -1278,6 +1340,19 @@ const BUTTON_NAMES_VN = {
   "SELECT": "Nút SELECT"
 };
 
+function formatKeyName(code) {
+  if (!code) return "Chưa gán";
+  return code
+    .replace("Key", "")
+    .replace("Digit", "")
+    .replace("ArrowUp", "▲ Lên")
+    .replace("ArrowDown", "▼ Xuống")
+    .replace("ArrowLeft", "◀ Trái")
+    .replace("ArrowRight", "▶ Phải")
+    .replace("ShiftRight", "Shift Phải")
+    .replace("ShiftLeft", "Shift Trái");
+}
+
 function openKeymapModal() {
   const modal = document.getElementById("keymap-modal");
   const list = document.getElementById("keymap-list");
@@ -1291,23 +1366,30 @@ function openKeymapModal() {
   list.innerHTML = "";
 
   Object.keys(BUTTON_NAMES_VN).forEach(action => {
-    // Tìm mã phím đang được gán cho action này
-    const boundKey = Object.keys(currentMap).find(k => currentMap[k] === action) || "Chưa gán";
+    const boundKey = Object.keys(currentMap).find(k => currentMap[k] === action) || "";
 
     const row = document.createElement("div");
     row.className = "keymap-row";
     row.innerHTML = `
       <span class="keymap-label">${BUTTON_NAMES_VN[action]}</span>
-      <button class="keymap-btn" id="kbtn-${action}" onclick="listenForNewKey('${action}')">${boundKey.replace("Key", "")}</button>
+      <button class="keymap-btn" id="kbtn-${action}" onclick="listenForNewKey('${action}')">${formatKeyName(boundKey)}</button>
     `;
     list.appendChild(row);
   });
 
+  switchKeymapTab("keyboard");
   modal.style.display = "flex";
 }
 
 function closeKeymapModal() {
   document.getElementById("keymap-modal").style.display = "none";
+}
+
+function switchKeymapTab(tab) {
+  document.getElementById("tab-btn-kb")?.classList.toggle("active", tab === "keyboard");
+  document.getElementById("tab-btn-vpad")?.classList.toggle("active", tab === "vpad");
+  document.getElementById("keymap-tab-kb")?.classList.toggle("active", tab === "keyboard");
+  document.getElementById("keymap-tab-vpad")?.classList.toggle("active", tab === "vpad");
 }
 
 function listenForNewKey(action) {
@@ -1323,7 +1405,6 @@ function listenForNewKey(action) {
     e.stopPropagation();
 
     const currentMap = getActiveKeymap();
-    // Xóa phím cũ đã gắn vào action này
     Object.keys(currentMap).forEach(k => {
       if (currentMap[k] === action) delete currentMap[k];
     });
@@ -1332,7 +1413,7 @@ function listenForNewKey(action) {
     saveActiveKeymap(currentMap);
 
     btn.classList.remove("is-listening");
-    btn.innerText = e.code.replace("Key", "");
+    btn.innerText = formatKeyName(e.code);
 
     window.removeEventListener("keydown", handler, { capture: true });
   };
@@ -1347,7 +1428,31 @@ function resetCurrentKeymap() {
   openKeymapModal();
 }
 
-// BẢNG TÙY CHỈNH VỊ TRÍ & KÍCH THƯỚC NÚT ẢO
+// ĐỔI PRESET PHÍM ẢO (NINTENDO VS XBOX LAYOUT)
+function applyVirtualPadPreset(preset) {
+  const btnX = document.getElementById("vbtn-x");
+  const btnY = document.getElementById("vbtn-y");
+  const btnB = document.getElementById("vbtn-b");
+  const btnA = document.getElementById("vbtn-a");
+
+  if (preset === "nintendo") {
+    btnA.setAttribute("data-pad-btn", "A"); btnA.innerText = "A";
+    btnB.setAttribute("data-pad-btn", "B"); btnB.innerText = "B";
+    btnX.setAttribute("data-pad-btn", "X"); btnX.innerText = "X";
+    btnY.setAttribute("data-pad-btn", "Y"); btnY.innerText = "Y";
+    localStorage.setItem("retrocloud_vpad_preset", "nintendo");
+    alert("Đã áp dụng Layout Nintendo (A bên phải, B bên dưới)!");
+  } else {
+    btnA.setAttribute("data-pad-btn", "B"); btnA.innerText = "B";
+    btnB.setAttribute("data-pad-btn", "A"); btnB.innerText = "A";
+    btnX.setAttribute("data-pad-btn", "Y"); btnX.innerText = "Y";
+    btnY.setAttribute("data-pad-btn", "X"); btnY.innerText = "X";
+    localStorage.setItem("retrocloud_vpad_preset", "xbox");
+    alert("Đã áp dụng Layout Xbox (A bên dưới, B bên phải)!");
+  }
+}
+
+// BẢNG TÙY CHỈNH VỊ TRÍ & KÍCH THƯỚC PHÍM ẢO
 let isConfigMode = false;
 let selectedElementId = "all";
 let padLayoutSettings = {};
@@ -1357,6 +1462,9 @@ function initVirtualGamepad() {
   setupVirtualButtonEvents();
   initFloatingQuickMenu();
   loadGamepadConfig();
+
+  const savedVpadPreset = localStorage.getItem("retrocloud_vpad_preset");
+  if (savedVpadPreset === "xbox") applyVirtualPadPreset("xbox");
 
   document.getElementById("slider-pad-scale")?.addEventListener("input", (e) => {
     const val = e.target.value / 100;
@@ -1726,8 +1834,10 @@ window.resetGamepadLayout = resetGamepadLayout;
 window.toggleGamepadConfig = toggleGamepadConfig;
 window.openKeymapModal = openKeymapModal;
 window.closeKeymapModal = closeKeymapModal;
+window.switchKeymapTab = switchKeymapTab;
 window.listenForNewKey = listenForNewKey;
 window.resetCurrentKeymap = resetCurrentKeymap;
+window.applyVirtualPadPreset = applyVirtualPadPreset;
 window.toggleVirtualGamepad = toggleVirtualGamepad;
 window.toggleFullscreen = toggleFullscreen;
 
