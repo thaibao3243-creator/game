@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RetroCloud - Web Giả Lập Trực Tuyến</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Thư viện quản lý Cache IndexedDB & Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -14,40 +13,31 @@
   <!-- THANH ĐIỀU HƯỚNG TRÊN CÙNG -->
   <header class="navbar">
     <div class="logo">🎮 RetroCloud</div>
-    
     <div class="nav-actions">
-      <!-- Phòng chơi Online -->
-      <div class="room-panel">
-        <input type="text" id="room-input" placeholder="Nhập mã phòng...">
-        <button id="btn-join-room" class="btn btn-secondary">Vào phòng</button>
-        <button id="btn-create-room" class="btn btn-primary">Tạo phòng</button>
-      </div>
-
-      <!-- Khu vực Tài khoản Game thủ -->
+      <button class="btn btn-primary" onclick="openNetplayModal()">🌐 Chơi Online</button>
       <div id="auth-container"></div>
     </div>
   </header>
 
-  <!-- NỘI DUNG CHÍNH TRUNG TÂM -->
+  <!-- NỘI DUNG CHÍNH -->
   <main class="main-content">
-    <!-- Khu vực hiển thị màn hình game giả lập -->
-<!-- Khu vực hiển thị màn hình game giả lập -->
+    <!-- KHUNG GIẢ LẬP VÀ MÀN HÌNH CHƠI -->
     <section id="emulator-section">
       <div id="game-container">
-        <!-- 1. Thanh tiện ích luôn nổi trên cùng -->
+        <!-- Thanh công cụ nổi trên đỉnh -->
         <div class="mobile-top-bar">
           <button id="btn-config-pad" class="btn-icon" title="Tùy chỉnh phím">⚙️</button>
           <button id="btn-toggle-pad" class="btn-icon" title="Ẩn/Hiện phím ảo">🎮</button>
           <button id="btn-fullscreen" class="btn-icon" title="Toàn màn hình">⛶</button>
         </div>
 
-        <!-- 2. Màn hình chờ ban đầu -->
+        <!-- Màn hình chờ -->
         <div id="game-placeholder">
           <div class="placeholder-icon">🕹️</div>
           <p>Chọn game bên dưới hoặc kéo thả ROM để bắt đầu</p>
         </div>
 
-        <!-- 3. Lớp phủ hiển thị phần trăm / trạng thái tải (Mặc định ẩn) -->
+        <!-- Lớp phủ tiến trình tải -->
         <div id="game-loader" style="display: none;">
           <div class="loading-box">
             <div class="loading-title" id="loader-title">Đang kết nối...</div>
@@ -61,31 +51,31 @@
           </div>
         </div>
 
-        <!-- 4. Khung chạy game của EmulatorJS -->
+        <!-- Canvas EmulatorJS -->
         <div id="game"></div>
 
-        <!-- 5. Bàn phím ảo tách rời từng nút -->
+        <!-- BÀN PHÍM ẢO CẢM ỨNG (TÁCH RỜI NEO TỌA ĐỘ) -->
         <div id="virtual-gamepad" class="gamepad-overlay">
-          <div id="pad-l" class="pad-element" data-id="pad-l" data-name="Nút vai L">
+          <div id="pad-l" class="pad-element" data-name="Nút vai L">
             <button class="v-btn v-btn-shoulder" data-key="KeyQ">L</button>
           </div>
-          <div id="pad-r" class="pad-element" data-id="pad-r" data-name="Nút vai R">
+          <div id="pad-r" class="pad-element" data-name="Nút vai R">
             <button class="v-btn v-btn-shoulder" data-key="KeyE">R</button>
           </div>
-          <div id="pad-dpad" class="pad-element dpad-cluster" data-id="pad-dpad" data-name="Cụm D-Pad">
+          <div id="pad-dpad" class="pad-element dpad-cluster" data-name="Cụm D-Pad">
             <button class="v-btn dpad-btn up" data-key="ArrowUp">▲</button>
             <button class="v-btn dpad-btn left" data-key="ArrowLeft">◀</button>
             <div class="dpad-center"></div>
             <button class="v-btn dpad-btn right" data-key="ArrowRight">▶</button>
             <button class="v-btn dpad-btn down" data-key="ArrowDown">▼</button>
           </div>
-          <div id="pad-select" class="pad-element" data-id="pad-select" data-name="Nút SELECT">
+          <div id="pad-select" class="pad-element" data-name="Nút SELECT">
             <button class="v-btn v-btn-pill" data-key="ShiftRight">SELECT</button>
           </div>
-          <div id="pad-start" class="pad-element" data-id="pad-start" data-name="Nút START">
+          <div id="pad-start" class="pad-element" data-name="Nút START">
             <button class="v-btn v-btn-pill" data-key="Enter">START</button>
           </div>
-          <div id="pad-actions" class="pad-element action-cluster" data-id="pad-actions" data-name="Cụm nút A/B/X/Y">
+          <div id="pad-actions" class="pad-element action-cluster" data-name="Cụm nút A/B/X/Y">
             <button class="v-btn action-btn x" data-key="KeyS">X</button>
             <button class="v-btn action-btn y" data-key="KeyA">Y</button>
             <button class="v-btn action-btn b" data-key="KeyZ">B</button>
@@ -93,7 +83,7 @@
           </div>
         </div>
 
-        <!-- 6. Bảng tùy chỉnh kích thước & vị trí phím -->
+        <!-- BẢNG CẤU HÌNH PHÍM ẢO -->
         <div id="gamepad-config-bar" class="gamepad-config-bar" style="display: none;">
           <div class="config-header">
             <span>Đang chọn: <strong id="cfg-target-name">Toàn bộ phím</strong></span>
@@ -110,11 +100,11 @@
             <button class="btn btn-sm btn-outline" onclick="resetGamepadLayout()">Mặc định</button>
             <button class="btn btn-sm btn-primary" onclick="toggleGamepadConfig(false)">Xong</button>
           </div>
-          <p class="config-tip">💡 Chạm vào nút bất kỳ để chọn, sau đó kéo thả hoặc chỉnh kích thước riêng.</p>
+          <p class="config-tip">💡 Chạm nút bất kỳ để chọn, sau đó kéo thả hoặc chỉnh tỉ lệ riêng.</p>
         </div>
       </div>
 
-      <!-- Thanh Cloud Save 3 Slot -->
+      <!-- THANH CLOUD SAVE 3 SLOT -->
       <div id="cloud-save-panel" class="cloud-save-bar" style="display:none;">
         <span class="slot-title">Đám Mây:</span>
         <button class="btn btn-sm btn-secondary" onclick="saveToCloud(1)">💾 Lưu 1</button>
@@ -126,7 +116,7 @@
       </div>
     </section>
 
-    <!-- Khu vực tự tải ROM từ máy (File API 0đ) -->
+    <!-- TỰ NẠP ROM TỪ MÁY -->
     <section class="upload-section">
       <div class="drop-zone" id="drop-zone">
         <div class="drop-zone-text">
@@ -138,7 +128,7 @@
       </div>
 
       <div class="system-select-card">
-        <label for="core-selector">Hệ máy giả lập khi upload game:</label>
+        <label for="core-selector">Hệ máy giả lập khi upload:</label>
         <select id="core-selector">
           <option value="gba">Game Boy Advance (GBA)</option>
           <option value="psx">PlayStation 1 (PS1)</option>
@@ -148,18 +138,14 @@
       </div>
     </section>
 
-    <!-- Danh sách game có sẵn từ Supabase -->
+    <!-- THƯ VIỆN GAME & TÌM KIẾM -->
     <section class="library-section">
       <div class="library-toolbar">
         <h2 class="section-title">Thư viện Game</h2>
-        
         <div class="filter-controls">
-          <!-- Ô tìm kiếm tên game -->
           <div class="search-wrapper">
             <input type="text" id="search-input" placeholder="🔍 Tìm tên game...">
           </div>
-
-          <!-- Nút lọc hệ máy -->
           <div class="system-filter-group" id="system-filters">
             <button class="filter-pill active" data-system="ALL">Tất cả</button>
             <button class="filter-pill" data-system="GBA">GBA</button>
@@ -169,7 +155,6 @@
           </div>
         </div>
       </div>
-
       <div class="game-grid" id="game-grid">
         <p class="loading-state">Đang kết nối thư viện game...</p>
       </div>
@@ -180,17 +165,14 @@
   <div id="auth-modal" class="modal-overlay" style="display:none;">
     <div class="modal-box">
       <h3 id="auth-modal-title">Đăng Nhập Game Thủ</h3>
-      
       <div class="input-group">
         <label for="auth-email">Email:</label>
         <input type="email" id="auth-email" placeholder="name@example.com">
       </div>
-
       <div class="input-group">
         <label for="auth-password">Mật khẩu:</label>
         <input type="password" id="auth-password" placeholder="Tối thiểu 6 ký tự">
       </div>
-
       <div class="modal-actions-column">
         <button class="btn btn-primary btn-block" id="btn-submit-auth" onclick="handleEmailAuth('login')">Đăng nhập</button>
         <button class="btn btn-secondary btn-block" onclick="loginWithGoogle()">Đăng nhập bằng Google</button>
@@ -200,49 +182,127 @@
     </div>
   </div>
 
-  <!-- MODAL QUẢN LÝ TÀI KHOẢN & DỮ LIỆU -->
-<div id="account-modal" class="modal-overlay" style="display:none;">
-  <div class="modal-box account-modal-box">
-    <div class="modal-header">
-      <h3>Trung Tâm Game Thủ</h3>
-      <button class="btn-close" onclick="closeAccountModal()">✕</button>
-    </div>
-
-    <!-- Thanh chuyển Tab -->
-    <div class="tab-nav">
-      <button class="tab-btn active" onclick="switchAccountTab('profile')">👤 Hồ sơ</button>
-      <button class="tab-btn" onclick="switchAccountTab('roms')">💾 ROM trong máy</button>
-      <button class="tab-btn" onclick="switchAccountTab('saves')">☁️ Save Đám mây</button>
-    </div>
-
-    <!-- TAB 1: THIẾT LẬP HỒ SƠ -->
-    <div id="tab-profile" class="tab-content active">
-      <div class="input-group">
-        <label for="input-username">Nickname hiển thị:</label>
-        <input type="text" id="input-username" maxlength="20" placeholder="VD: DragonKnight...">
+  <!-- MODAL TRUNG TÂM TÀI KHOẢN -->
+  <div id="account-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box account-modal-box">
+      <div class="modal-header">
+        <h3>Trung Tâm Game Thủ</h3>
+        <button class="btn-close" onclick="closeAccountModal()">✕</button>
       </div>
-      <div class="modal-actions-row" style="margin-top: 1rem;">
-        <button class="btn btn-primary" onclick="saveUsername()">Lưu Nickname</button>
+      <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchAccountTab('profile')">👤 Hồ sơ</button>
+        <button class="tab-btn" onclick="switchAccountTab('roms')">💾 ROM trong máy</button>
+        <button class="tab-btn" onclick="switchAccountTab('saves')">☁️ Save Đám mây</button>
       </div>
-    </div>
 
-    <!-- TAB 2: QUẢN LÝ BỘ NHỚ LOCAL (INDEXEDDB) -->
-    <div id="tab-roms" class="tab-content">
-      <p class="tab-desc">Các file game đã được lưu vào bộ nhớ trình duyệt để chơi ngay không tốn mạng:</p>
-      <div id="local-roms-list" class="storage-list">
-        <p class="empty-state">Đang quét bộ nhớ...</p>
+      <div id="tab-profile" class="tab-content active">
+        <div class="input-group">
+          <label for="input-username">Nickname hiển thị:</label>
+          <input type="text" id="input-username" maxlength="20" placeholder="Nhập tên hiển thị...">
+        </div>
+        <div class="modal-actions-row" style="margin-top: 1rem;">
+          <button class="btn btn-primary" onclick="saveUsername()">Lưu Nickname</button>
+        </div>
       </div>
-    </div>
 
-    <!-- TAB 3: QUẢN LÝ CLOUD SAVE (SUPABASE) -->
-    <div id="tab-saves" class="tab-content">
-      <p class="tab-desc">Các bản lưu tiến trình (Slot 1 - 3) đang lưu trữ trên Cloud Storage:</p>
-      <div id="cloud-saves-list" class="storage-list">
-        <p class="empty-state">Đang nạp danh sách file save...</p>
+      <div id="tab-roms" class="tab-content">
+        <p class="tab-desc">Các file game đã lưu đệm vào bộ nhớ IndexedDB để tải ngay lập tức:</p>
+        <div id="local-roms-list" class="storage-list">
+          <p class="empty-state">Đang quét bộ nhớ...</p>
+        </div>
+      </div>
+
+      <div id="tab-saves" class="tab-content">
+        <p class="tab-desc">Các bản lưu tiến trình (Slot 1 - 3) trên Supabase Cloud Storage:</p>
+        <div id="cloud-saves-list" class="storage-list">
+          <p class="empty-state">Đang nạp danh sách file save...</p>
+        </div>
       </div>
     </div>
   </div>
-</div>
+
+  <!-- MODAL SẢNH NETPLAY ONLINE (P2P LOCKSTEP) -->
+  <div id="netplay-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-box netplay-box">
+      <!-- 1. Chọn chế độ Host / Guest -->
+      <div id="np-view-select" class="np-view active">
+        <div class="modal-header">
+          <h3>🎮 Sảnh Chơi Online (P2P Netplay)</h3>
+          <button class="btn-close" onclick="closeNetplayModal()">✕</button>
+        </div>
+        <p class="tab-desc">Chơi đối kháng 2 người qua mạng với độ trễ thấp (Lockstep P2P).</p>
+        <div class="np-role-buttons">
+          <button class="btn btn-primary btn-large" onclick="npShowHostSelect()">👑 Tạo phòng mới (Host)</button>
+          <button class="btn btn-secondary btn-large" onclick="npShowGuestInput()">🔍 Tìm phòng bằng mã (Client)</button>
+        </div>
+      </div>
+
+      <!-- 2. Host: Chọn Game có thanh tìm kiếm -->
+      <div id="np-view-host-select" class="np-view">
+        <div class="modal-header">
+          <h3>Chọn Game Đấu Online</h3>
+          <button class="btn-close" onclick="npBackToSelect()">←</button>
+        </div>
+        <div class="np-form-group">
+          <label>Chọn từ thư viện có sẵn:</label>
+          <input type="text" id="np-host-search" class="custom-search-input" placeholder="🔍 Gõ tên game hoặc hệ máy để lọc..." oninput="filterHostGames(this.value)">
+          <select id="np-host-game-select" class="custom-select" style="margin-top: 6px;">
+            <option value="">-- Chọn game trong danh sách --</option>
+          </select>
+        </div>
+        <div class="np-divider"><span>HOẶC</span></div>
+        <div class="np-form-group">
+          <label>Nạp file ROM từ thiết bị:</label>
+          <input type="file" id="np-host-file-input" class="custom-file-input">
+        </div>
+        <button class="btn btn-primary w-100" style="margin-top: 1rem;" onclick="hostConfirmCreateLobby()">Tạo Phòng Chờ</button>
+      </div>
+
+      <!-- 3. Host: Phòng chờ đối thủ kèm mã PIN -->
+      <div id="np-view-host-lobby" class="np-view">
+        <div class="modal-header">
+          <h3>Phòng Chờ Đối Thủ</h3>
+        </div>
+        <div class="lobby-card">
+          <span class="lobby-label">MÃ PHÒNG (Gửi cho bạn bè)</span>
+          <div class="room-pin" id="np-display-pin">------</div>
+          <button class="btn-copy" onclick="copyRoomCode()">📋 Sao chép mã</button>
+        </div>
+        <div class="lobby-game-info">
+          <p>Tựa game đã chọn: <strong id="np-lobby-gamename" style="color:var(--accent-cyan);">--</strong></p>
+        </div>
+        <div class="lobby-status">
+          <span class="pulse-indicator"></span> Đang đợi người chơi 2 tham gia...
+        </div>
+        <button class="btn btn-outline w-100" style="margin-top: 1.2rem;" onclick="cancelNetplayLobby()">Hủy Phòng</button>
+      </div>
+
+      <!-- 4. Guest: Nhập mã PIN -->
+      <div id="np-view-guest" class="np-view">
+        <div class="modal-header">
+          <h3>Tham Gia Phòng Chơi</h3>
+          <button class="btn-close" onclick="npBackToSelect()">←</button>
+        </div>
+        <div class="np-form-group">
+          <label>Nhập mã PIN 6 ký tự của Host:</label>
+          <input type="text" id="np-guest-pin-input" maxlength="6" placeholder="VD: 7K2M9X" style="text-transform:uppercase; text-align:center; font-size:1.4rem; letter-spacing:4px;">
+        </div>
+        <button class="btn btn-primary w-100" style="margin-top: 1rem;" onclick="clientJoinLobby()">Vào Trận Đấu</button>
+      </div>
+
+      <!-- 5. Đồng bộ trước khi vào game -->
+      <div id="np-view-sync" class="np-view">
+        <div class="modal-header">
+          <h3>Đang Đồng Bộ...</h3>
+        </div>
+        <div class="sync-box">
+          <div class="sync-spinner"></div>
+          <p id="np-sync-status">Đang kết nối P2P qua WebRTC...</p>
+          <div class="countdown-number" id="np-countdown" style="display:none;">3</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
