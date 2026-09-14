@@ -620,13 +620,35 @@ function triggerGamepadEvent(gamepadObj) {
 }
 
 // Bắn sự kiện kết nối cho CẢ HAI TAY CẦM và bơm trực tiếp vào EmulatorJS
+// Bắn sự kiện kết nối và tự động gán nút P2 vào EmulatorJS
 function triggerAllGamepadsConnected() {
   triggerGamepadEvent(fakeP1Gamepad);
   triggerGamepadEvent(fakeP2Gamepad);
 
-  if (window.EJS_emulator?.gamepad?.gamepads) {
-    window.EJS_emulator.gamepad.gamepads[0] = fakeP1Gamepad;
-    window.EJS_emulator.gamepad.gamepads[1] = fakeP2Gamepad;
+  if (window.EJS_emulator) {
+    // 1. Gán danh sách gamepad vật lý ảo
+    if (window.EJS_emulator.gamepad) {
+      window.EJS_emulator.gamepad.gamepads = [fakeP1Gamepad, fakeP2Gamepad];
+      window.EJS_emulator.gamepad.playerGamepads = [0, 1]; // P1 dùng slot 0, P2 dùng slot 1
+    }
+
+    // 2. Tự động map nút chuẩn W3C cho Player 2 trong core EmulatorJS
+    if (window.EJS_emulator.controls) {
+      window.EJS_emulator.controls[1] = {
+        "up": "button_12",
+        "down": "button_13",
+        "left": "button_14",
+        "right": "button_15",
+        "a": "button_0",       // Cross (PS1)
+        "b": "button_1",       // Circle (PS1)
+        "x": "button_2",       // Square (PS1)
+        "y": "button_3",       // Triangle (PS1)
+        "l": "button_4",       // L1
+        "r": "button_5",       // R1
+        "select": "button_8",  // Select
+        "start": "button_9"    // Start
+      };
+    }
   }
 }
 
@@ -856,6 +878,11 @@ async function waitForHostCanvas() {
   return document.querySelector("#game canvas");
 }
 
+// Kỹ thuật ép WebRTC tắt hoàn toàn hàng đợi đệm (Jitter Buffer = 0)
+function forceZeroLatencySDP(sdp) {
+  return sdp.replace(/(m=video .*\r\n)/, "$1a=playout-delay:0,0\r\n");
+}
+
 async function handleNetplaySignal(data) {
   if (data.type === "lobby_closed") {
     alert("Host đã hủy hoặc rời phòng đấu.");
@@ -885,20 +912,22 @@ async function handleNetplaySignal(data) {
       const combinedStream = new MediaStream();
       const videoStream = canvas.captureStream(60);
       const vTrack = videoStream.getVideoTracks()[0];
+      
       if (vTrack) {
-        vTrack.contentHint = "detail";
+        vTrack.contentHint = "motion";
         combinedStream.addTrack(vTrack);
         const sender = peerConnection.addTrack(vTrack, combinedStream);
 
+        // Giới hạn 3.5 Mbps: Đủ nét căng cho PS1 mà encoder không bị nghẽn buffer
         setTimeout(() => {
           try {
             const params = sender.getParameters();
             if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-            params.encodings[0].maxBitrate = 8000000;
-            params.degradationPreference = "maintain-resolution";
+            params.encodings[0].maxBitrate = 3500000;
+            params.degradationPreference = "maintain-framerate";
             sender.setParameters(params);
           } catch (e) {}
-        }, 500);
+        }, 300);
       }
 
       if (netplayAudioStream) {
@@ -910,7 +939,8 @@ async function handleNetplaySignal(data) {
       }
     }
 
-    const offer = await peerConnection.createOffer();
+    let offer = await peerConnection.createOffer();
+    offer.sdp = forceZeroLatencySDP(offer.sdp);
     await peerConnection.setLocalDescription(offer);
     roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "offer", sdp: offer } });
 
@@ -918,7 +948,8 @@ async function handleNetplaySignal(data) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
     await flushIceCandidateQueue();
 
-    const answer = await peerConnection.createAnswer();
+    let answer = await peerConnection.createAnswer();
+    answer.sdp = forceZeroLatencySDP(answer.sdp);
     await peerConnection.setLocalDescription(answer);
     roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "answer", sdp: answer } });
 
@@ -937,6 +968,66 @@ async function handleNetplaySignal(data) {
       }
     }
   }
+}
+
+// Client: Ép receiver triệt tiêu hoàn toàn Jitter Buffer
+function handleClientIncomingStream(newTrack) {
+  const container = document.getElementById("game-container");
+  const placeholder = document.getElementById("game-placeholder");
+  const loader = document.getElementById("game-loader");
+  if (placeholder) placeholder.style.display = "none";
+  if (loader) loader.style.display = "none";
+
+  let gameDiv = document.getElementById("game");
+  if (!gameDiv) {
+    gameDiv = document.createElement("div");
+    gameDiv.id = "game";
+    container.appendChild(gameDiv);
+  }
+
+  let video = document.getElementById("netplay-video");
+  if (!video) {
+    gameDiv.innerHTML = `
+      <video id="netplay-video" autoplay playsinline muted 
+        style="width:100%; height:100%; object-fit:contain; background:#000; display:block; z-index:10;">
+      </video>
+    `;
+    video = document.getElementById("netplay-video");
+
+    // Xóa bộ đệm phát video của trình duyệt
+    if ("playoutDelayHint" in HTMLMediaElement.prototype) {
+      video.playoutDelayHint = 0;
+    }
+
+    clientMediaStream = new MediaStream();
+    video.srcObject = clientMediaStream;
+
+    // Ép mọi receiver WebRTC triệt tiêu jitter buffer
+    if (peerConnection) {
+      peerConnection.getReceivers().forEach(receiver => {
+        if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
+        if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
+      });
+    }
+
+    const unmute = () => {
+      if (video) video.muted = false;
+      window.removeEventListener("click", unmute);
+      window.removeEventListener("touchstart", unmute);
+      window.removeEventListener("keydown", unmute);
+    };
+    window.addEventListener("click", unmute);
+    window.addEventListener("touchstart", unmute);
+    window.addEventListener("keydown", unmute);
+  }
+
+  if (clientMediaStream && !clientMediaStream.getTracks().includes(newTrack)) {
+    clientMediaStream.addTrack(newTrack);
+  }
+
+  video.play().catch(() => {});
+  const overlay = document.getElementById("virtual-gamepad");
+  if (overlay) overlay.style.display = "block";
 }
 
 function setupPeerConnection(isHost) {
@@ -1142,14 +1233,18 @@ const ACTION_TO_KEYINFO = {
   "SELECT": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
 };
 
+// Lấy bảng map phím: Dù là Host hay Guest, trên máy của ai thì người đó 
+// đều dùng chính bảng phím chơi đơn quen thuộc của mình!
 function getActiveKeymap() {
-  const isGuest = (netplayActive && !isHostPlayer);
-  const storageKey = isGuest ? "retrocloud_keymap_p2" : "retrocloud_keymap_p1";
-  const saved = localStorage.getItem(storageKey);
+  const saved = localStorage.getItem("retrocloud_keymap_p1");
   if (saved) {
     try { return JSON.parse(saved); } catch (e) {}
   }
-  return isGuest ? { ...DEFAULT_P2_KEYMAP } : { ...DEFAULT_P1_KEYMAP };
+  return { ...DEFAULT_P1_KEYMAP };
+}
+
+function saveActiveKeymap(map) {
+  localStorage.setItem("retrocloud_keymap_p1", JSON.stringify(map));
 }
 
 function saveActiveKeymap(map) {
