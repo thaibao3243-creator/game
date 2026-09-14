@@ -533,7 +533,7 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. WEBRTC P2P NETPLAY (GỘP STREAM + BUFFER ICE + ZERO DELAY)
+// 7. WEBRTC P2P NETPLAY (GỘP STREAM + BUFFER ICE + HUY HIỆU 2P)
 // =================================================================
 
 let peerConnection = null;
@@ -543,7 +543,7 @@ let isHostPlayer = false;
 let netplayActive = false;
 let currentLobbyCode = null;
 let netplayGameTarget = null;
-let iceCandidateQueue = []; // Hàng đợi giữ gói ICE tránh bị rơi rớt
+let iceCandidateQueue = [];
 
 const rtcConfig = {
   iceServers: [
@@ -665,28 +665,23 @@ function resetP2Input() {
   fakeP2Gamepad.timestamp = performance.now();
 }
 
-// --- BẢNG PHÍM GUEST (HỖ TRỢ LƯU VÀO LOCALSTORAGE) ---
-const DEFAULT_GUEST_KEYS = {
-  "ArrowUp": "UP",    "KeyW": "UP",
-  "ArrowDown": "DOWN",  "KeyS": "DOWN",
-  "ArrowLeft": "LEFT",  "KeyA": "LEFT",
-  "ArrowRight": "RIGHT", "KeyD": "RIGHT",
-  "KeyX": "A",        "KeyK": "A",
-  "KeyZ": "B",        "KeyJ": "B",
-  "KeyA": "Y",        "KeyU": "Y",
-  "KeyS": "X",        "KeyI": "X",
-  "KeyQ": "L",        "KeyE": "R",
-  "Enter": "START",
-  "ShiftRight": "SELECT", "ShiftLeft": "SELECT"
-};
+// Cập nhật huy hiệu trạng thái kết nối 2 người chơi
+function updateNetplayBadgeStatus(state) {
+  const badge = document.getElementById("netplay-badge");
+  const badgeText = document.getElementById("netplay-badge-text");
+  if (!badge) return;
 
-// Hàm lấy mapping phím tùy chỉnh của Guest (nếu chưa chỉnh thì lấy mặc định)
-function getGuestKeyMapping() {
-  const saved = localStorage.getItem("retrocloud_guest_keymap");
-  if (saved) {
-    try { return JSON.parse(saved); } catch (e) {}
+  if (state === "connected") {
+    badge.style.display = "inline-flex";
+    badge.className = "netplay-badge connected";
+    if (badgeText) badgeText.innerText = "2P: Đã kết nối (2/2)";
+  } else if (state === "disconnected") {
+    badge.style.display = "inline-flex";
+    badge.className = "netplay-badge disconnected";
+    if (badgeText) badgeText.innerText = "2P: Mất kết nối";
+  } else {
+    badge.style.display = "none";
   }
-  return DEFAULT_GUEST_KEYS;
 }
 
 // --- QUẢN LÝ LOBBY ---
@@ -778,6 +773,7 @@ function cancelNetplayLobby() {
   netplayActive = false;
   iceCandidateQueue = [];
   resetP2Input();
+  updateNetplayBadgeStatus("hidden");
   switchNetplayView("np-view-select");
 }
 
@@ -846,6 +842,7 @@ async function handleNetplaySignal(data) {
   if (data.type === "lobby_closed") {
     alert("Host đã hủy hoặc rời phòng đấu.");
     closeNetplayModal();
+    updateNetplayBadgeStatus("disconnected");
     if (!isHostPlayer) {
       document.getElementById("game").innerHTML = "";
       document.getElementById("game-placeholder")?.style.removeProperty("display");
@@ -867,27 +864,24 @@ async function handleNetplaySignal(data) {
     if (canvas && peerConnection) {
       triggerP2GamepadConnected();
 
-      // GỘP VIDEO VÀ AUDIO VÀO CHUNG 1 MEDIASTREAM DUY NHẤT
       const combinedStream = new MediaStream();
-
       const videoStream = canvas.captureStream(60);
       const vTrack = videoStream.getVideoTracks()[0];
       if (vTrack) {
-        vTrack.contentHint = "detail"; // Ưu tiên độ chi tiết đồ họa
+        vTrack.contentHint = "detail";
         const sender = peerConnection.addTrack(vTrack, combinedStream);
 
-        // Ép băng thông 6000 kbps (6 Mbps) & giữ nguyên độ phân giải gốc
         setTimeout(() => {
           try {
             const params = sender.getParameters();
             if (!params.encodings || params.encodings.length === 0) {
               params.encodings = [{}];
             }
-            params.encodings[0].maxBitrate = 6000000; // 6 Mbps
-            params.degradationPreference = "maintain-resolution"; // Tuyệt đối không giảm độ phân giải
+            params.encodings[0].maxBitrate = 6000000;
+            params.degradationPreference = "maintain-resolution";
             sender.setParameters(params);
           } catch (e) {
-            console.warn("Không thể gán bitrate:", e);
+            console.warn("Lỗi gán bitrate:", e);
           }
         }, 500);
       }
@@ -943,7 +937,6 @@ function setupPeerConnection(isHost) {
     dataChannel = peerConnection.createDataChannel("p2_input", { ordered: false, maxRetransmits: 0 });
     setupDataChannelHandlers();
   } else {
-    // Guest nhận luồng hình ảnh / âm thanh từ Host
     peerConnection.ontrack = (e) => {
       const stream = e.streams[0] || new MediaStream([e.track]);
       handleClientIncomingStream(stream, e.track);
@@ -959,6 +952,7 @@ function setupPeerConnection(isHost) {
 function setupDataChannelHandlers() {
   dataChannel.onopen = () => {
     netplayActive = true;
+    updateNetplayBadgeStatus("connected");
     runCountdownAnimation();
   };
 
@@ -974,10 +968,10 @@ function setupDataChannelHandlers() {
   dataChannel.onclose = () => {
     netplayActive = false;
     resetP2Input();
+    updateNetplayBadgeStatus("disconnected");
   };
 }
 
-// Client: Xử lý video chống đè luồng và chống chặn Autoplay
 function handleClientIncomingStream(stream, newTrack) {
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
@@ -1005,7 +999,6 @@ function handleClientIncomingStream(stream, newTrack) {
       video.playoutDelayHint = 0;
     }
 
-    // Tự động gỡ mute khi người chơi tương tác màn hình
     const unmute = () => {
       if (video) video.muted = false;
       window.removeEventListener("click", unmute);
@@ -1017,7 +1010,6 @@ function handleClientIncomingStream(stream, newTrack) {
     window.addEventListener("keydown", unmute);
   }
 
-  // Nếu video đã có stream, chỉ bổ sung thêm track (không gán lại đè srcObject)
   if (video.srcObject) {
     if (!video.srcObject.getTracks().includes(newTrack)) {
       video.srcObject.addTrack(newTrack);
@@ -1026,7 +1018,7 @@ function handleClientIncomingStream(stream, newTrack) {
     video.srcObject = stream;
   }
 
-  video.play().catch(e => console.warn("Video play error:", e));
+  video.play().catch(e => console.warn("Lỗi phát video:", e));
 
   const overlay = document.getElementById("virtual-gamepad");
   if (overlay) overlay.style.display = "block";
@@ -1063,7 +1055,7 @@ function copyRoomCode() {
 }
 
 // =================================================================
-// 8. BÀN PHÍM ẢO & ĐIỀU KHIỂN CÁCH LY TUYỆT ĐỐI
+// 8. BÀN PHÍM ẢO, MAPPING PHÍM CHO CLIENT & TỰ ĐỘNG LÀM MỜ THANH CÔNG CỤ
 // =================================================================
 const KEY_MAP_CONFIG = {
   "ArrowUp":    { key: "ArrowUp",    code: "ArrowUp",    keyCode: 38 },
@@ -1080,13 +1072,132 @@ const KEY_MAP_CONFIG = {
   "ShiftRight": { key: "Shift",      code: "ShiftRight", keyCode: 16 }
 };
 
+const DEFAULT_GUEST_KEYS = {
+  "ArrowUp": "UP",    "KeyW": "UP",
+  "ArrowDown": "DOWN",  "KeyS": "DOWN",
+  "ArrowLeft": "LEFT",  "KeyA": "LEFT",
+  "ArrowRight": "RIGHT", "KeyD": "RIGHT",
+  "KeyX": "A",        "KeyK": "A",
+  "KeyZ": "B",        "KeyJ": "B",
+  "KeyA": "Y",        "KeyU": "Y",
+  "KeyS": "X",        "KeyI": "X",
+  "KeyQ": "L",        "KeyE": "R",
+  "Enter": "START",
+  "ShiftRight": "SELECT", "ShiftLeft": "SELECT"
+};
+
+const ACTION_LABELS = {
+  "UP": "Lên (D-Pad)",
+  "DOWN": "Xuống (D-Pad)",
+  "LEFT": "Trái (D-Pad)",
+  "RIGHT": "Phải (D-Pad)",
+  "A": "Nút A (Cross)",
+  "B": "Nút B (Circle)",
+  "X": "Nút X (Triangle)",
+  "Y": "Nút Y (Square)",
+  "L": "Nút vai L",
+  "R": "Nút vai R",
+  "START": "START",
+  "SELECT": "SELECT"
+};
+
+let listeningAction = null;
 let isConfigMode = false;
 let selectedElementId = "all";
 let padLayoutSettings = {};
+let topBarIdleTimer = null;
+
+function getGuestKeyMapping() {
+  const saved = localStorage.getItem("retrocloud_guest_keymap");
+  if (saved) {
+    try { return JSON.parse(saved); } catch (e) {}
+  }
+  return { ...DEFAULT_GUEST_KEYS };
+}
+
+function openKeybindModal() {
+  const modal = document.getElementById("keybind-modal");
+  if (modal) modal.style.display = "flex";
+  renderKeybindList();
+}
+
+function closeKeybindModal() {
+  const modal = document.getElementById("keybind-modal");
+  if (modal) modal.style.display = "none";
+  listeningAction = null;
+}
+
+function renderKeybindList() {
+  const container = document.getElementById("keybind-list");
+  if (!container) return;
+
+  const currentMap = getGuestKeyMapping();
+  container.innerHTML = "";
+
+  Object.entries(ACTION_LABELS).forEach(([action, label]) => {
+    // Tìm các phím đang gán cho action này
+    const boundKeys = Object.keys(currentMap).filter(k => currentMap[k] === action);
+    const displayKey = boundKeys.length > 0 ? boundKeys.join(" / ").replace(/Key|Arrow/g, "") : "Chưa gán";
+
+    const row = document.createElement("div");
+    row.className = "keybind-row";
+    row.innerHTML = `
+      <span class="keybind-label">${label}</span>
+      <button class="keybind-btn ${listeningAction === action ? 'listening' : ''}" onclick="startListeningKey('${action}')">
+        ${listeningAction === action ? 'Nhấn 1 phím...' : displayKey}
+      </button>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function startListeningKey(action) {
+  listeningAction = action;
+  renderKeybindList();
+}
+
+function resetKeybindings() {
+  localStorage.removeItem("retrocloud_guest_keymap");
+  listeningAction = null;
+  renderKeybindList();
+}
+
+// Bật/làm mờ thanh công cụ tiện ích khi idle
+function triggerTopBarActive() {
+  const bar = document.getElementById("mobile-top-bar");
+  if (!bar) return;
+
+  bar.classList.add("is-active");
+  if (topBarIdleTimer) clearTimeout(topBarIdleTimer);
+
+  topBarIdleTimer = setTimeout(() => {
+    if (!isConfigMode) {
+      bar.classList.remove("is-active");
+    }
+  }, 3000);
+}
 
 function initVirtualGamepad() {
-  // Lắng nghe phím cứng PC của Guest (Bắt cả WASD lẫn Arrow keys gửi sang P2)
+  // Lắng nghe bàn phím PC cho Guest & Key Mapping
   window.addEventListener("keydown", (e) => {
+    // Nếu đang trong trạng thái gán phím ở Modal
+    if (listeningAction) {
+      e.preventDefault();
+      const currentMap = getGuestKeyMapping();
+
+      // Xóa phím này nếu đang gán ở nút khác
+      delete currentMap[e.code];
+
+      // Gán phím mới cho action đang chọn
+      currentMap[e.code] = listeningAction;
+      localStorage.setItem("retrocloud_guest_keymap", JSON.stringify(currentMap));
+
+      listeningAction = null;
+      renderKeybindList();
+      return;
+    }
+
+    // Nếu đang trong trận đấu P2P và là Guest
     if (netplayActive && !isHostPlayer) {
       const keyMap = getGuestKeyMapping();
       const btn = keyMap[e.code];
@@ -1098,7 +1209,7 @@ function initVirtualGamepad() {
   });
 
   window.addEventListener("keyup", (e) => {
-    if (netplayActive && !isHostPlayer) {
+    if (netplayActive && !isHostPlayer && !listeningAction) {
       const keyMap = getGuestKeyMapping();
       const btn = keyMap[e.code];
       if (btn) {
@@ -1108,13 +1219,27 @@ function initVirtualGamepad() {
     }
   });
 
+  // Tự động làm sáng thanh công cụ khi di chuột / chạm màn hình game
+  const gameContainer = document.getElementById("game-container");
+  if (gameContainer) {
+    gameContainer.addEventListener("mousemove", triggerTopBarActive);
+    gameContainer.addEventListener("touchstart", triggerTopBarActive, { passive: true });
+  }
+
   loadGamepadConfig();
 
+  // Nút mở Modal Keymap bàn phím
+  document.getElementById("btn-keymap")?.addEventListener("click", () => {
+    openKeybindModal();
+  });
+
+  // Nút ẩn hiện phím ảo
   document.getElementById("btn-toggle-pad")?.addEventListener("click", () => {
     const overlay = document.getElementById("virtual-gamepad");
     if (overlay) overlay.style.display = (overlay.style.display === "none") ? "block" : "none";
   });
 
+  // Toàn màn hình
   document.getElementById("btn-fullscreen")?.addEventListener("click", () => {
     const container = document.getElementById("game-container");
     if (!document.fullscreenElement) {
@@ -1124,6 +1249,7 @@ function initVirtualGamepad() {
     }
   });
 
+  // Nút bật cấu hình phím ảo
   document.getElementById("btn-config-pad")?.addEventListener("click", () => {
     toggleGamepadConfig(!isConfigMode);
   });
@@ -1154,16 +1280,14 @@ function sendGuestInput(action, btnName) {
   }
 }
 
-// Xử lý sự kiện bấm phím: Phân luồng Player 1 và Player 2 độc lập
 function dispatchGameKey(type, keyCodeIdentifier) {
-  // 1. NẾU LÀ GUEST (PLAYER 2): Dịch sang mã nút Gamepad và gửi qua DataChannel
   if (netplayActive && !isHostPlayer) {
-    const btnName = KEY_TO_NETPLAY_BTN[keyCodeIdentifier];
+    const keyMap = getGuestKeyMapping();
+    const btnName = keyMap[keyCodeIdentifier];
     if (btnName) sendGuestInput(type, btnName);
     return;
   }
 
-  // 2. NẾU LÀ HOST HOẶC CHƠI ĐƠN: Điều khiển Player 1 thông qua KeyboardEvent
   const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
   if (!keyInfo) return;
 
@@ -1285,9 +1409,15 @@ function toggleGamepadConfig(active) {
   isConfigMode = active;
   const configBar = document.getElementById("gamepad-config-bar");
   const overlay = document.getElementById("virtual-gamepad");
+  const topBar = document.getElementById("mobile-top-bar");
 
   if (configBar) configBar.style.display = active ? "flex" : "none";
   if (overlay) overlay.classList.toggle("is-editing", active);
+
+  if (topBar) {
+    if (active) topBar.classList.add("is-active");
+    else triggerTopBarActive();
+  }
 
   if (!active) {
     saveGamepadConfig();
@@ -1402,7 +1532,8 @@ function openAccountModal() {
 
 function closeAccountModal() {
   const modal = document.getElementById("account-modal");
-  if (modal) modal.style.display = "none";
+  if (!modal) return;
+  modal.style.display = "none";
 }
 
 function switchAccountTab(tabName) {
@@ -1566,6 +1697,10 @@ window.clientJoinLobby = clientJoinLobby;
 window.copyRoomCode = copyRoomCode;
 window.resetGamepadLayout = resetGamepadLayout;
 window.toggleGamepadConfig = toggleGamepadConfig;
+window.openKeybindModal = openKeybindModal;
+window.closeKeybindModal = closeKeybindModal;
+window.startListeningKey = startListeningKey;
+window.resetKeybindings = resetKeybindings;
 
 window.addEventListener("DOMContentLoaded", () => {
   initAuth();

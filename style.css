@@ -153,13 +153,14 @@ body {
   color: var(--text-secondary);
   z-index: 20;
 }
-/* Ép thẻ Video của Client hiển thị sắc nét từng pixel như màn hình CRT gốc */
+
 #netplay-video {
   image-rendering: -moz-crisp-edges;
   image-rendering: -webkit-crisp-edges;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
+
 .placeholder-icon {
   font-size: 3rem;
   opacity: 0.7;
@@ -223,7 +224,6 @@ body {
   font-weight: bold;
 }
 
-/* Ẩn các nút lưu mặc định của EmulatorJS */
 #game [title*="Save"], #game [title*="Load"], #game [title*="Lưu"],
 #game [aria-label*="Save"], #game [aria-label*="Load"] {
   display: none !important;
@@ -424,20 +424,34 @@ body {
   font-weight: bold;
 }
 
-/* ================= THANH CÔNG CỤ ĐỈNH & PHÍM ẢO ================= */
+/* ================= THANH TIỆN ÍCH GOM NHÓM & TỰ ĐỘNG LÀM MỜ ================= */
 .mobile-top-bar {
   position: absolute;
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   z-index: 999 !important;
-  background: rgba(20, 23, 36, 0.85);
+  background: rgba(20, 23, 36, 0.75);
   border: 1px solid var(--border-color);
   padding: 4px 10px;
   border-radius: 24px;
   backdrop-filter: blur(8px);
+  /* Tự làm mờ khi không sử dụng */
+  opacity: 0.28;
+  transition: opacity 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Hiện rõ khi hover, focus hoặc khi người chơi tương tác */
+.mobile-top-bar:hover,
+.mobile-top-bar:focus-within,
+.mobile-top-bar.is-active {
+  opacity: 1 !important;
+  background: rgba(20, 23, 36, 0.95);
+  border-color: var(--accent-cyan);
+  box-shadow: 0 4px 16px rgba(0, 229, 255, 0.25);
 }
 
 .btn-icon {
@@ -452,11 +466,63 @@ body {
   font-size: 1.05rem;
   cursor: pointer;
   border-radius: 50%;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, transform 0.1s;
 }
 
-.btn-icon:hover { background: rgba(255, 255, 255, 0.1); }
+.btn-icon:hover { 
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.08);
+}
 
+/* Huy hiệu trạng thái kết nối Netplay 2 Người */
+.netplay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(0, 229, 255, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  white-space: nowrap;
+}
+
+.netplay-badge.connected {
+  background: rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+  border-color: rgba(0, 255, 136, 0.4);
+}
+
+.netplay-badge.disconnected {
+  background: rgba(255, 68, 68, 0.15);
+  color: #ff5555;
+  border-color: rgba(255, 68, 68, 0.4);
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7);
+  animation: pulse-badge 1.8s infinite;
+}
+
+.netplay-badge.disconnected .pulse-dot {
+  background: #ff5555;
+  animation: none;
+  box-shadow: none;
+}
+
+@keyframes pulse-badge {
+  0% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+}
+
+/* ================= BÀN PHÍM ẢO CẢM ỨNG ================= */
 .gamepad-overlay {
   position: absolute;
   inset: 0;
@@ -475,7 +541,6 @@ body {
   touch-action: none;
 }
 
-/* Neo tọa độ thông minh 4 góc */
 #pad-l       { top: 20px; left: 20px; }
 #pad-r       { top: 20px; right: 20px; }
 #pad-dpad    { bottom: 30px; left: 30px; }
@@ -532,7 +597,6 @@ body {
 .action-btn.b { bottom: 0; left: 43px; color: #e57373; }
 .action-btn.a { top: 43px; right: 0; color: #ffb74d; }
 
-/* Trạng thái config */
 .gamepad-overlay.is-editing .pad-element {
   outline: 1.5px dashed rgba(0, 229, 255, 0.45);
   background: rgba(0, 229, 255, 0.08);
@@ -603,7 +667,7 @@ body {
   text-align: center;
 }
 
-/* ================= MODAL & ACCOUNT DASHBOARD ================= */
+/* ================= MODAL & MAPPING PHÍM (KEYBIND MODAL) ================= */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -632,6 +696,66 @@ body {
   max-width: 520px;
   width: 95%;
   max-height: 85vh;
+}
+
+.keybind-modal-box {
+  max-width: 490px;
+  width: 95%;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.keybind-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.keybind-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.keybind-label {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.keybind-btn {
+  background: #1b2032;
+  border: 1px solid var(--border-color);
+  color: var(--accent-cyan);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.78rem;
+  min-width: 65px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.keybind-btn:hover {
+  border-color: var(--accent-cyan);
+}
+
+.keybind-btn.listening {
+  background: var(--accent-cyan);
+  color: #05070e;
+  font-weight: bold;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.8);
+  animation: pulse-listening 1s infinite alternate;
+}
+
+@keyframes pulse-listening {
+  from { transform: scale(0.96); }
+  to { transform: scale(1.04); }
 }
 
 .modal-header {
@@ -924,9 +1048,9 @@ body {
   .library-toolbar { flex-direction: column; align-items: stretch; }
   .search-wrapper input { width: 100%; }
   .system-filter-group { overflow-x: auto; padding-bottom: 4px; }
+  .keybind-grid { grid-template-columns: 1fr; }
 }
 
-/* Xoay ngang điện thoại (Full screen Gaming) */
 @media (max-height: 500px) and (orientation: landscape) {
   .navbar, .upload-section, .library-section, .cloud-save-bar {
     display: none !important;

@@ -24,9 +24,14 @@
     <!-- KHUNG GIẢ LẬP VÀ MÀN HÌNH CHƠI -->
     <section id="emulator-section">
       <div id="game-container">
-        <!-- Thanh công cụ nổi trên đỉnh -->
-        <div class="mobile-top-bar">
-          <button id="btn-config-pad" class="btn-icon" title="Tùy chỉnh phím">⚙️</button>
+        <!-- 1. Thanh tiện ích nổi trên đỉnh (Gom nhóm & tự mờ khi idle) -->
+        <div class="mobile-top-bar" id="mobile-top-bar">
+          <div id="netplay-badge" class="netplay-badge" style="display:none;" title="Trạng thái kết nối P2P">
+            <span class="pulse-dot"></span>
+            <span id="netplay-badge-text">2P: Sẵn sàng</span>
+          </div>
+          <button id="btn-config-pad" class="btn-icon" title="Tùy chỉnh phím ảo cảm ứng">⚙️</button>
+          <button id="btn-keymap" class="btn-icon" title="Cài đặt phím bàn phím PC">⌨️</button>
           <button id="btn-toggle-pad" class="btn-icon" title="Ẩn/Hiện phím ảo">🎮</button>
           <button id="btn-fullscreen" class="btn-icon" title="Toàn màn hình">⛶</button>
         </div>
@@ -41,17 +46,12 @@
         <div id="game-loader" style="display: none;">
           <div class="loading-box">
             <div class="loading-title" id="loader-title">Đang kết nối...</div>
-            <div class="progress-track" id="loader-track">
-              <div class="progress-fill" id="download-progress-bar"></div>
-            </div>
-            <div class="loading-stats">
-              <span id="download-size"></span>
-              <span class="loading-percent" id="download-percent"></span>
-            </div>
+            <div class="progress-track" id="loader-track"><div class="progress-fill" id="download-progress-bar"></div></div>
+            <div class="loading-stats"><span id="download-size"></span><span class="loading-percent" id="download-percent"></span></div>
           </div>
         </div>
 
-        <!-- Canvas EmulatorJS -->
+        <!-- Canvas EmulatorJS / Video Stream -->
         <div id="game"></div>
 
         <!-- BÀN PHÍM ẢO CẢM ỨNG (TÁCH RỜI NEO TỌA ĐỘ) -->
@@ -83,7 +83,7 @@
           </div>
         </div>
 
-        <!-- BẢNG CẤU HÌNH PHÍM ẢO -->
+        <!-- BẢNG CẤU HÌNH PHÍM ẢO CẢM ỨNG -->
         <div id="gamepad-config-bar" class="gamepad-config-bar" style="display: none;">
           <div class="config-header">
             <span>Đang chọn: <strong id="cfg-target-name">Toàn bộ phím</strong></span>
@@ -300,6 +300,24 @@
           <p id="np-sync-status">Đang kết nối P2P qua WebRTC...</p>
           <div class="countdown-number" id="np-countdown" style="display:none;">3</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CÀI ĐẶT MAPPING PHÍM BÀN PHÍM (CHO CLIENT/P2) -->
+  <div id="keybind-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box keybind-modal-box">
+      <div class="modal-header">
+        <h3>⌨️ Cài Đặt Phím Bàn Phím (Player 2)</h3>
+        <button class="btn-close" onclick="closeKeybindModal()">✕</button>
+      </div>
+      <p class="tab-desc">Chạm vào ô phím của nút bất kỳ rồi nhấn 1 phím trên bàn phím để gán mới:</p>
+      
+      <div class="keybind-grid" id="keybind-list"></div>
+
+      <div class="modal-actions-row" style="margin-top: 1rem;">
+        <button class="btn btn-outline btn-sm" onclick="resetKeybindings()">Mặc định</button>
+        <button class="btn btn-primary btn-sm" onclick="closeKeybindModal()">Đóng</button>
       </div>
     </div>
   </div>
