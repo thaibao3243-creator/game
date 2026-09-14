@@ -309,15 +309,33 @@
         <button class="btn btn-outline w-100" style="margin-top: 1.2rem;" onclick="cancelNetplayLobby()">Hủy Phòng</button>
       </div>
 
+      <!-- 4. Guest: Nhập mã PIN & Chọn Game -->
       <div id="np-view-guest" class="np-view">
         <div class="modal-header">
           <h3>Tham Gia Phòng Chơi</h3>
           <button class="btn-close" onclick="npBackToSelect()">←</button>
         </div>
+
         <div class="np-form-group">
           <label>Nhập mã PIN 6 ký tự của Host:</label>
           <input type="text" id="np-guest-pin-input" maxlength="6" placeholder="VD: 7K2M9X" style="text-transform:uppercase; text-align:center; font-size:1.4rem; letter-spacing:4px;">
         </div>
+
+        <div class="np-form-group" style="margin-top: 10px;">
+          <label>Chọn game trong thư viện (Mặc định tự nạp theo Host):</label>
+          <input type="text" id="np-guest-search" class="custom-search-input" placeholder="🔍 Gõ để lọc nhanh game..." oninput="filterGuestGames(this.value)">
+          <select id="np-guest-game-select" class="custom-select" style="margin-top: 6px;">
+            <option value="">-- Tự động nạp theo Host (Mặc định) --</option>
+          </select>
+        </div>
+
+        <div class="np-divider"><span>HOẶC TỰ NẠP TỪ MÁY</span></div>
+
+        <div class="np-form-group">
+          <label>Nạp file ROM từ thiết bị của bạn:</label>
+          <input type="file" id="np-guest-file-input" class="custom-file-input">
+        </div>
+
         <button class="btn btn-primary w-100" style="margin-top: 1rem;" onclick="clientJoinLobby()">Vào Trận Đấu</button>
       </div>
 
