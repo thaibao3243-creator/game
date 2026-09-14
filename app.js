@@ -536,7 +536,7 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. WEBRTC P2P NETPLAY HIỆU NĂNG CAO (ZERO DESYNC, SUB-15MS LATENCY)
+// 7. WEBRTC P2P NETPLAY - GIẢ LẬP ĐỦ 2 GAMEPAD TRÁNH CRASH CORE
 // =================================================================
 let peerConnection = null;
 let dataChannel = null;
@@ -555,7 +555,6 @@ const rtcConfig = {
   ]
 };
 
-// CẬP NHẬT BADGE TRẠNG THÁI THỜI GIAN THỰC
 function updateNetplayStatusBadge(state, text) {
   const badge = document.getElementById("netplay-status-badge");
   const txt = document.getElementById("netplay-status-text");
@@ -565,14 +564,22 @@ function updateNetplayStatusBadge(state, text) {
   txt.innerText = text;
 }
 
-// GIẢ LẬP TAY CẦM VIRTUAL GAMEPAD 2 (W3C STANDARD)
-const virtualP2Buttons = Array.from({ length: 17 }, () => ({
-  pressed: false,
-  touched: false,
-  value: 0
-}));
-const virtualP2Axes = [0, 0, 0, 0];
+// 1. GAMEPAD ẢO CHO PLAYER 1 (GIỮ CHỖ TRÁNH LỖI UNDEFINED TRÊN EMULATORJS)
+const fakeP1Buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+const fakeP1Axes = [0, 0, 0, 0];
+const fakeP1Gamepad = {
+  id: "Standard Wireless Controller (Player 1)",
+  index: 0,
+  connected: true,
+  timestamp: performance.now(),
+  mapping: "standard",
+  axes: fakeP1Axes,
+  buttons: fakeP1Buttons
+};
 
+// 2. GAMEPAD ẢO CHO PLAYER 2 (NHẬN TÍN HIỆU TỪ GUEST QUA WEBRTC)
+const virtualP2Buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+const virtualP2Axes = [0, 0, 0, 0];
 const fakeP2Gamepad = {
   id: "Standard Wireless Controller (Player 2)",
   index: 1,
@@ -583,28 +590,43 @@ const fakeP2Gamepad = {
   buttons: virtualP2Buttons
 };
 
-// Hook navigator.getGamepads - chuẩn hóa tránh undefined ở index 0
+// Hook navigator.getGamepads: Đảm bảo cả slot 0 và 1 luôn tồn tại Object hợp lệ
 const nativeGetGamepads = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : () => [];
 navigator.getGamepads = function() {
   const list = nativeGetGamepads();
   const gamepads = list ? Array.from(list) : [];
+
   if (isHostPlayer && netplayActive) {
-    while (gamepads.length < 2) gamepads.push(null);
+    if (!gamepads[0]) {
+      gamepads[0] = fakeP1Gamepad;
+    }
     gamepads[1] = fakeP2Gamepad;
+    fakeP1Gamepad.timestamp = performance.now();
+    fakeP2Gamepad.timestamp = performance.now();
   }
   return gamepads;
 };
 
-function triggerP2GamepadConnected() {
+// Kích hoạt sự kiện gamepad tương thích mọi trình duyệt
+function triggerGamepadEvent(gamepadObj) {
+  let ev;
   try {
-    const ev = new GamepadEvent("gamepadconnected", { gamepad: fakeP2Gamepad });
-    window.dispatchEvent(ev);
-  } catch (e) {
-    try {
-      const ev = new Event("gamepadconnected");
-      ev.gamepad = fakeP2Gamepad;
-      window.dispatchEvent(ev);
-    } catch (err) {}
+    ev = new GamepadEvent("gamepadconnected", { gamepad: gamepadObj });
+  } catch (err) {
+    ev = new Event("gamepadconnected", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "gamepad", { value: gamepadObj, enumerable: true });
+  }
+  window.dispatchEvent(ev);
+}
+
+// Bắn sự kiện kết nối cho CẢ HAI TAY CẦM và bơm trực tiếp vào EmulatorJS
+function triggerAllGamepadsConnected() {
+  triggerGamepadEvent(fakeP1Gamepad);
+  triggerGamepadEvent(fakeP2Gamepad);
+
+  if (window.EJS_emulator?.gamepad?.gamepads) {
+    window.EJS_emulator.gamepad.gamepads[0] = fakeP1Gamepad;
+    window.EJS_emulator.gamepad.gamepads[1] = fakeP2Gamepad;
   }
 }
 
@@ -858,7 +880,7 @@ async function handleNetplaySignal(data) {
 
     const canvas = await waitForHostCanvas();
     if (canvas && peerConnection) {
-      triggerP2GamepadConnected();
+      triggerAllGamepadsConnected();
 
       const combinedStream = new MediaStream();
       const videoStream = canvas.captureStream(60);
@@ -980,7 +1002,6 @@ function setupDataChannelHandlers() {
   };
 }
 
-// Client: Xử lý video Stream không độ trễ, chuẩn hóa multi-track
 function handleClientIncomingStream(newTrack) {
   const container = document.getElementById("game-container");
   const placeholder = document.getElementById("game-placeholder");
@@ -1052,8 +1073,8 @@ function runCountdownAnimation() {
       clearInterval(timer);
       document.getElementById("netplay-modal").style.display = "none";
       if (isHostPlayer) {
-        triggerP2GamepadConnected();
-        setTimeout(triggerP2GamepadConnected, 1000);
+        triggerAllGamepadsConnected();
+        setTimeout(triggerAllGamepadsConnected, 1000);
       }
     }
   }, 1000);
@@ -1064,7 +1085,6 @@ function copyRoomCode() {
   navigator.clipboard.writeText(currentLobbyCode).then(() => alert("Đã copy: " + currentLobbyCode));
 }
 
-// Clean up kết nối khi reload trang
 window.addEventListener("beforeunload", () => {
   if (roomChannel) {
     try {
@@ -1077,7 +1097,6 @@ window.addEventListener("beforeunload", () => {
 // 8. HỆ THỐNG MAP PHÍM ĐỘC LẬP & TỰ LÀM MỜ NÚT TIỆN ÍCH
 // =================================================================
 
-// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 1 (HOST / SINGLE PLAYER)
 const DEFAULT_P1_KEYMAP = {
   "ArrowUp": "UP",
   "ArrowDown": "DOWN",
@@ -1093,7 +1112,6 @@ const DEFAULT_P1_KEYMAP = {
   "ShiftRight": "SELECT"
 };
 
-// BẢNG PHÍM MẶC ĐỊNH CHO PLAYER 2 (GUEST)
 const DEFAULT_P2_KEYMAP = {
   "ArrowUp": "UP",    "KeyW": "UP",
   "ArrowDown": "DOWN",  "KeyS": "DOWN",
@@ -1140,9 +1158,7 @@ function saveActiveKeymap(map) {
   localStorage.setItem(storageKey, JSON.stringify(map));
 }
 
-// Bơm input tới Host (nếu là Guest) hoặc nạp vào Core (nếu là Host)
 function dispatchGameAction(type, actionName) {
-  // 1. GUEST (PLAYER 2): Gửi qua DataChannel UDP, không bắn KeyboardEvent
   if (netplayActive && !isHostPlayer) {
     if (dataChannel && dataChannel.readyState === "open") {
       try {
@@ -1156,7 +1172,6 @@ function dispatchGameAction(type, actionName) {
     return;
   }
 
-  // 2. HOST HOẶC ĐƠN ĐẤU: Phát vào Canvas game cho Player 1
   const keyInfo = ACTION_TO_KEYINFO[actionName];
   if (!keyInfo) return;
 
@@ -1181,14 +1196,12 @@ function dispatchGameAction(type, actionName) {
   }
 }
 
-// Lắng nghe bàn phím PC cho cả Host và Guest chuẩn xác 100%
 function setupKeyboardListeners() {
   window.addEventListener("keydown", (e) => {
-    if (!e.isTrusted) return; // Bỏ qua sự kiện giả lập chống lặp đệ quy
+    if (!e.isTrusted) return;
     if (document.getElementById("keymap-modal")?.style.display === "flex") return;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
 
-    // GUEST (P2): Bắt buộc chặn phím và bắn packet qua WebRTC
     if (netplayActive && !isHostPlayer) {
       const map = getActiveKeymap();
       const action = map[e.code];
@@ -1199,19 +1212,14 @@ function setupKeyboardListeners() {
       return;
     }
 
-    // HOST (P1) HOẶC ĐƠN ĐẤU:
     const map = getActiveKeymap();
     const action = map[e.code];
     if (action) {
       const defaultKeyInfo = ACTION_TO_KEYINFO[action];
-      // Nếu phím bấm KHÁC với phím mặc định của EmulatorJS (đã bị remap)
-      // thì mới chặn và tạo sự kiện chuyển đổi
       if (defaultKeyInfo && e.code !== defaultKeyInfo.code) {
         e.preventDefault();
         dispatchGameAction("keydown", action);
       }
-      // Nếu dùng phím mặc định (Mũi tên, Z, X, Enter...), để trình duyệt 
-      // đưa sự kiện phần cứng gốc trực tiếp vào game để đạt độ nhạy tối đa.
     }
   });
 
@@ -1241,7 +1249,7 @@ function setupKeyboardListeners() {
     }
   });
 }
-// Bắt sự kiện phím ảo cảm ứng (Mobile)
+
 function setupVirtualButtonEvents() {
   document.querySelectorAll(".v-btn").forEach(btn => {
     const press = (e) => {
@@ -1269,7 +1277,6 @@ function setupVirtualButtonEvents() {
   });
 }
 
-// TỰ ĐỘNG LÀM MỜ NÚT TIỆN ÍCH KHI RẢNH
 let idleMenuTimer = null;
 function initFloatingQuickMenu() {
   const menuContainer = document.getElementById("floating-quick-menu");
@@ -1324,7 +1331,6 @@ function toggleFullscreen() {
   }
 }
 
-// MODAL CÀI ĐẶT MAP PHÍM
 const BUTTON_NAMES_VN = {
   "UP": "Mũi tên LÊN",
   "DOWN": "Mũi tên XUỐNG",
@@ -1428,7 +1434,6 @@ function resetCurrentKeymap() {
   openKeymapModal();
 }
 
-// ĐỔI PRESET PHÍM ẢO (NINTENDO VS XBOX LAYOUT)
 function applyVirtualPadPreset(preset) {
   const btnX = document.getElementById("vbtn-x");
   const btnY = document.getElementById("vbtn-y");
@@ -1452,7 +1457,6 @@ function applyVirtualPadPreset(preset) {
   }
 }
 
-// BẢNG TÙY CHỈNH VỊ TRÍ & KÍCH THƯỚC PHÍM ẢO
 let isConfigMode = false;
 let selectedElementId = "all";
 let padLayoutSettings = {};
@@ -1587,8 +1591,8 @@ function selectPadElement(elementId) {
       targetEl.classList.add("is-selected");
       if (targetLabel) targetLabel.innerText = targetEl.getAttribute("data-name") || elementId;
       const itemConf = padLayoutSettings[elementId] || {};
-      const scale = itemConf.scale || padLayoutSettings["all"]?.scale || 1.0;
-      const opacity = itemConf.opacity || padLayoutSettings["all"]?.opacity || 0.8;
+      const scale = itemConf.scale !== undefined ? itemConf.scale : (padLayoutSettings["all"]?.scale || 1.0);
+      const opacity = itemConf.opacity !== undefined ? itemConf.opacity : (padLayoutSettings["all"]?.opacity || 0.8);
       if (sliderScale) sliderScale.value = scale * 100;
       if (sliderOpacity) sliderOpacity.value = opacity * 100;
       document.getElementById("val-pad-scale").innerText = `${Math.round(scale * 100)}%`;
