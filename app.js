@@ -122,7 +122,7 @@ async function launchGameWithCache(gameId, core, romUrl, gameTitle) {
   }
 }
 
-function startEmulator(core, romSource, gameTitle = "Retro Game") {
+function startEmulator(core, romSource, gameTitle = "Retro Game", netplayOptions = null) {
   const placeholder = document.getElementById("game-placeholder");
   const loader = document.getElementById("game-loader");
   const cloudBar = document.getElementById("cloud-save-panel");
@@ -140,6 +140,7 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
     gameDiv.innerHTML = "";
   }
 
+  // 1. Cấu hình cơ bản
   window.EJS_player = "#game";
   window.EJS_core = core;
   window.EJS_gameName = gameTitle;
@@ -147,6 +148,17 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/";
   window.EJS_startOnLoaded = true;
 
+  // 2. Kích hoạt Native Netplay nếu có cấu hình phòng
+  if (netplayOptions && netplayOptions.enabled) {
+    window.EJS_netplay = true;
+    window.EJS_netplayUrl = "wss://netplay.emulatorjs.org"; // Relay server công cộng mặc định của EmulatorJS
+    window.EJS_netplayRoom = netplayOptions.roomId;
+    window.EJS_netplayNickname = netplayOptions.nickname || "Player";
+  } else {
+    window.EJS_netplay = false;
+  }
+
+  // 3. Tắt nút lưu đè mặc định
   const noSaveButtons = {
     playPause: true, restart: true, mute: true, volume: true, settings: true,
     fullscreen: true, gamepad: true, saveState: false, loadState: false,
@@ -155,6 +167,7 @@ function startEmulator(core, romSource, gameTitle = "Retro Game") {
   window.EJS_buttons = noSaveButtons;
   window.EJS_defaultButtons = noSaveButtons;
 
+  // 4. Nạp script core
   const oldScript = document.getElementById("ejs-loader");
   if (oldScript) oldScript.remove();
 
@@ -512,36 +525,12 @@ async function recordPlayHistory(gameId) {
 }
 
 // =================================================================
-// 7. SẢNH NETPLAY ONLINE (P2P WEBRTC DATACHANNEL KHÔNG ĐỘ TRỄ)
+// 7. SẢNH CHỜ NETPLAY (KÍCH HOẠT NATIVE LIBRETRO NETPLAY)
 // =================================================================
-let peerConnection = null;
-let dataChannel = null;
+
 let roomChannel = null;
-let isHostPlayer = false;
 let currentLobbyCode = null;
 let netplayGameTarget = null;
-
-const rtcConfig = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" }
-  ]
-};
-
-const P2_MAPPING = {
-  "ArrowUp":    { key: "i", code: "KeyI", keyCode: 73 },
-  "ArrowDown":  { key: "k", code: "KeyK", keyCode: 75 },
-  "ArrowLeft":  { key: "j", code: "KeyJ", keyCode: 74 },
-  "ArrowRight": { key: "l", code: "KeyL", keyCode: 76 },
-  "KeyZ":       { key: "u", code: "KeyU", keyCode: 85 },
-  "KeyX":       { key: "y", code: "KeyY", keyCode: 89 },
-  "KeyA":       { key: "o", code: "KeyO", keyCode: 79 },
-  "KeyS":       { key: "p", code: "KeyP", keyCode: 80 },
-  "KeyQ":       { key: "7", code: "Digit7", keyCode: 55 },
-  "KeyE":       { key: "8", code: "Digit8", keyCode: 56 },
-  "Enter":      { key: "0", code: "Digit0", keyCode: 48 },
-  "ShiftRight": { key: "9", code: "Digit9", keyCode: 57 }
-};
 
 function switchNetplayView(viewId) {
   document.querySelectorAll(".np-view").forEach(v => v.classList.remove("active"));
@@ -550,7 +539,7 @@ function switchNetplayView(viewId) {
 
 function openNetplayModal() {
   if (!currentUser) {
-    alert("Vui lòng đăng nhập tài khoản để vào sảnh Online!");
+    alert("Vui lòng đăng nhập để mở sảnh Netplay!");
     openAuthModal();
     return;
   }
@@ -577,7 +566,7 @@ function renderHostGameOptions(games) {
   if (!games || games.length === 0) {
     const opt = document.createElement("option");
     opt.disabled = true;
-    opt.innerText = "Không tìm thấy game nào";
+    opt.innerText = "Không tìm thấy game phù hợp";
     select.appendChild(opt);
     return;
   }
@@ -607,6 +596,7 @@ function npShowHostSelect() {
   switchNetplayView("np-view-host-select");
 }
 
+// 1. HOST TẠO PHÒNG CHỜ
 function hostConfirmCreateLobby() {
   const select = document.getElementById("np-host-game-select");
   const fileInput = document.getElementById("np-host-file-input");
@@ -614,11 +604,10 @@ function hostConfirmCreateLobby() {
   const localFile = fileInput?.files[0];
 
   if (!selectedGameId && !localFile) {
-    alert("Vui lòng chọn 1 game từ danh sách hoặc nạp file từ máy!");
+    alert("Vui lòng chọn 1 game hoặc nạp ROM!");
     return;
   }
 
-  isHostPlayer = true;
   currentLobbyCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
   if (selectedGameId) {
@@ -638,7 +627,7 @@ function hostConfirmCreateLobby() {
   document.getElementById("np-lobby-gamename").innerText = netplayGameTarget.title;
   switchNetplayView("np-view-host-lobby");
 
-  initLockstepSignaling(currentLobbyCode, true);
+  initHostNetplayChannel(currentLobbyCode);
 }
 
 function cancelNetplayLobby() {
@@ -647,15 +636,33 @@ function cancelNetplayLobby() {
     supabaseClient.removeChannel(roomChannel);
     roomChannel = null;
   }
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
   currentLobbyCode = null;
   netplayGameTarget = null;
   switchNetplayView("np-view-select");
 }
 
+// Bắt tay gửi thông tin game qua Supabase Broadcast
+function initHostNetplayChannel(roomId) {
+  if (roomChannel) supabaseClient.removeChannel(roomChannel);
+
+  roomChannel = supabaseClient.channel(`netplay_${roomId}`, { config: { broadcast: { self: false } } });
+  roomChannel
+    .on("broadcast", { event: "signal" }, async ({ payload }) => {
+      if (payload.type === "guest_joined") {
+        // Gửi dữ liệu ROM cho Guest và ra lệnh cả 2 cùng vào game
+        roomChannel.send({
+          type: "broadcast",
+          event: "signal",
+          payload: { type: "start_match", game: netplayGameTarget }
+        });
+
+        launchNativeNetplay(true);
+      }
+    })
+    .subscribe();
+}
+
+// 2. CLIENT VÀO PHÒNG
 function npShowGuestInput() {
   switchNetplayView("np-view-guest");
 }
@@ -663,192 +670,72 @@ function npShowGuestInput() {
 function clientJoinLobby() {
   const pinInput = document.getElementById("np-guest-pin-input");
   const roomId = pinInput ? pinInput.value.trim().toUpperCase() : "";
-  if (roomId.length !== 6) return alert("Mã phòng hợp lệ gồm đúng 6 ký tự!");
+  if (roomId.length !== 6) return alert("Mã phòng hợp lệ gồm 6 ký tự!");
 
-  isHostPlayer = false;
   currentLobbyCode = roomId;
-
   switchNetplayView("np-view-sync");
-  document.getElementById("np-sync-status").innerText = "Đang kết nối tới máy Host...";
+  document.getElementById("np-sync-status").innerText = "Đang kết nối tới phòng của Host...";
 
-  initLockstepSignaling(currentLobbyCode, false);
+  initGuestNetplayChannel(currentLobbyCode);
 }
 
-function initLockstepSignaling(roomId, isHost) {
+function initGuestNetplayChannel(roomId) {
   if (roomChannel) supabaseClient.removeChannel(roomChannel);
 
-  roomChannel = supabaseClient.channel(`room_${roomId}`, {
-    config: { broadcast: { self: false } }
-  });
-
+  roomChannel = supabaseClient.channel(`netplay_${roomId}`, { config: { broadcast: { self: false } } });
   roomChannel
     .on("broadcast", { event: "signal" }, async ({ payload }) => {
-      await handleLockstepSignal(payload);
+      if (payload.type === "lobby_closed") {
+        alert("Host đã hủy phòng chờ.");
+        closeNetplayModal();
+      } else if (payload.type === "start_match") {
+        netplayGameTarget = payload.game;
+        document.getElementById("np-sync-status").innerText = `Đang đồng bộ ROM: ${netplayGameTarget.title}...`;
+        launchNativeNetplay(false);
+      }
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
-        setupLockstepPeer(isHost);
-        if (!isHost) {
-          roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "guest_joined" } });
-        }
+        roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "guest_joined" } });
       }
     });
 }
 
-async function handleLockstepSignal(data) {
-  if (data.type === "lobby_closed") {
-    alert("Host đã hủy phòng chờ này.");
-    closeNetplayModal();
-    return;
-  }
+// 3. KHỞI CHẠY ĐỒNG BỘ TRÊN CẢ HAI THIẾT BỊ
+async function launchNativeNetplay(isHost) {
+  const modal = document.getElementById("netplay-modal");
+  if (modal) modal.style.display = "none";
 
-  if (data.type === "guest_joined" && isHostPlayer) {
-    switchNetplayView("np-view-sync");
-    document.getElementById("np-sync-status").innerText = "Người chơi 2 đã vào! Đang bắt tay P2P...";
-
-    roomChannel.send({
-      type: "broadcast", event: "signal",
-      payload: { type: "game_info", game: netplayGameTarget }
-    });
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "offer", sdp: offer } });
-
-  } else if (data.type === "game_info" && !isHostPlayer) {
-    netplayGameTarget = data.game;
-    document.getElementById("np-sync-status").innerText = `Chuẩn bị game: ${netplayGameTarget.title}...`;
-
-    if (!netplayGameTarget.isLocal) {
-      await launchGameWithCache(netplayGameTarget.id, netplayGameTarget.core, netplayGameTarget.rom_url, netplayGameTarget.title);
-    } else {
-      alert(`Host chọn file máy: [${netplayGameTarget.title}]. Vui lòng đảm bảo bạn cũng nạp file tương ứng.`);
-    }
-
-  } else if (data.type === "offer" && !isHostPlayer) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "answer", sdp: answer } });
-
-  } else if (data.type === "answer" && isHostPlayer) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
-  } else if (data.type === "candidate" && peerConnection) {
-    try {
-      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-    } catch (err) {
-      console.warn("Lỗi ICE:", err);
-    }
-  }
-}
-
-function setupLockstepPeer(isHost) {
-  peerConnection = new RTCPeerConnection(rtcConfig);
-
-  peerConnection.onicecandidate = (e) => {
-    if (e.candidate && roomChannel) {
-      roomChannel.send({ type: "broadcast", event: "signal", payload: { type: "candidate", candidate: e.candidate } });
-    }
+  const netplayConfig = {
+    enabled: true,
+    roomId: currentLobbyCode,
+    nickname: (userProfile?.username || (isHost ? "Host_P1" : "Guest_P2"))
   };
 
-  if (isHost) {
-    dataChannel = peerConnection.createDataChannel("inputSync", { ordered: false, maxRetransmits: 0 });
-    setupDataChannelEvents();
+  if (netplayGameTarget.isLocal) {
+    const blobUrl = URL.createObjectURL(netplayGameTarget.file);
+    startEmulator(netplayGameTarget.core, blobUrl, netplayGameTarget.title, netplayConfig);
   } else {
-    peerConnection.ondatachannel = (e) => {
-      dataChannel = e.channel;
-      setupDataChannelEvents();
-    };
-  }
-}
+    // Tải hoặc lấy từ IndexedDB
+    let romBlob = null;
+    if (window.idbKeyval) {
+      const cached = await window.idbKeyval.get(`rom_${netplayGameTarget.id}`);
+      romBlob = cached instanceof Blob ? cached : cached?.blob;
+    }
 
-function setupDataChannelEvents() {
-  dataChannel.onopen = () => {
-    if (isHostPlayer) {
-      dataChannel.send(JSON.stringify({ type: "COUNTDOWN_START" }));
-      if (netplayGameTarget.isLocal) {
-        const blobUrl = URL.createObjectURL(netplayGameTarget.file);
-        startEmulator(netplayGameTarget.core, blobUrl, netplayGameTarget.title);
-      } else {
-        launchGameWithCache(netplayGameTarget.id, netplayGameTarget.core, netplayGameTarget.rom_url, netplayGameTarget.title);
+    if (!romBlob) {
+      romBlob = await fetchWithProgress(netplayGameTarget.rom_url);
+      if (window.idbKeyval) {
+        await window.idbKeyval.set(`rom_${netplayGameTarget.id}`, {
+          blob: romBlob, title: netplayGameTarget.title,
+          core: netplayGameTarget.core.toUpperCase(), savedAt: new Date().toLocaleDateString("vi-VN")
+        });
       }
-      runCountdownAnimation();
     }
-  };
 
-  dataChannel.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "COUNTDOWN_START") runCountdownAnimation();
-      else if (msg.type === "KEY") injectRemoteInput(msg.player, msg.action, msg.code);
-    } catch (err) {
-      console.warn("Lỗi packet:", err);
-    }
-  };
-}
-
-function runCountdownAnimation() {
-  switchNetplayView("np-view-sync");
-  const spinner = document.querySelector(".sync-spinner");
-  const statusTxt = document.getElementById("np-sync-status");
-  const countdownEl = document.getElementById("np-countdown");
-
-  if (spinner) spinner.style.display = "none";
-  if (statusTxt) statusTxt.innerText = "ĐÃ ĐỒNG BỘ! TRẬN ĐẤU BẮT ĐẦU SAU:";
-  if (countdownEl) countdownEl.style.display = "block";
-
-  let count = 3;
-  if (countdownEl) countdownEl.innerText = count;
-
-  const timer = setInterval(() => {
-    count--;
-    if (count > 0) {
-      if (countdownEl) countdownEl.innerText = count;
-    } else {
-      clearInterval(timer);
-      const modal = document.getElementById("netplay-modal");
-      if (modal) modal.style.display = "none";
-      window.EJS_emulator?.gameManager?.restart?.();
-    }
-  }, 1000);
-}
-
-function sendNetplayInput(action, rawCode) {
-  if (!dataChannel || dataChannel.readyState !== "open") return;
-  dataChannel.send(JSON.stringify({
-    type: "KEY",
-    player: isHostPlayer ? 1 : 2,
-    action: action,
-    code: rawCode
-  }));
-}
-
-function injectRemoteInput(player, action, rawCode) {
-  let targetCode = rawCode;
-  let targetKeyCode = 0;
-
-  if (player === 2) {
-    const map = P2_MAPPING[rawCode];
-    if (map) { targetCode = map.code; targetKeyCode = map.keyCode; }
-  } else {
-    const p1Info = KEY_MAP_CONFIG[rawCode];
-    if (p1Info) targetKeyCode = p1Info.keyCode;
+    const blobUrl = URL.createObjectURL(romBlob);
+    startEmulator(netplayGameTarget.core, blobUrl, netplayGameTarget.title, netplayConfig);
   }
-
-  const event = new KeyboardEvent(action, {
-    code: targetCode, key: targetCode,
-    keyCode: targetKeyCode, which: targetKeyCode,
-    bubbles: true, cancelable: true, composed: true
-  });
-
-  Object.defineProperty(event, "keyCode", { get: () => targetKeyCode });
-  Object.defineProperty(event, "which", { get: () => targetKeyCode });
-
-  const canvas = document.querySelector("#game canvas") || document.getElementById("game");
-  if (canvas) canvas.dispatchEvent(event);
-  document.dispatchEvent(event);
-  window.dispatchEvent(event);
 }
 
 function copyRoomCode() {
@@ -881,6 +768,35 @@ let selectedElementId = "all";
 let padLayoutSettings = {};
 
 function initVirtualGamepad() {
+  // Lắng nghe bàn phím PC cho Guest khi chơi Netplay
+  window.addEventListener("keydown", (e) => {
+    if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
+      // Map cả WASD lẫn phím mũi tên về mã phím chuẩn
+      const keyAlias = {
+        "KeyW": "ArrowUp", "KeyS": "ArrowDown", "KeyA": "ArrowLeft", "KeyD": "ArrowRight",
+        "KeyJ": "KeyZ", "KeyK": "KeyX", "KeyU": "KeyA", "KeyI": "KeyS"
+      };
+      const mappedCode = keyAlias[e.code] || e.code;
+      if (KEY_MAP_CONFIG[mappedCode]) {
+        e.preventDefault();
+        dispatchGameKey("keydown", mappedCode);
+      }
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
+      const keyAlias = {
+        "KeyW": "ArrowUp", "KeyS": "ArrowDown", "KeyA": "ArrowLeft", "KeyD": "ArrowRight",
+        "KeyJ": "KeyZ", "KeyK": "KeyX", "KeyU": "KeyA", "KeyI": "KeyS"
+      };
+      const mappedCode = keyAlias[e.code] || e.code;
+      if (KEY_MAP_CONFIG[mappedCode]) {
+        e.preventDefault();
+        dispatchGameKey("keyup", mappedCode);
+      }
+    }
+  });
   loadGamepadConfig();
 
   document.getElementById("btn-toggle-pad")?.addEventListener("click", () => {
@@ -918,23 +834,30 @@ function initVirtualGamepad() {
 }
 
 function dispatchGameKey(type, keyCodeIdentifier) {
-  if (typeof sendNetplayInput === "function") sendNetplayInput(type, keyCodeIdentifier);
-
-  let keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
-  let targetCode = keyCodeIdentifier;
-
-  if (!isHostPlayer && P2_MAPPING[keyCodeIdentifier]) {
-    const p2Key = P2_MAPPING[keyCodeIdentifier];
-    keyInfo = { key: p2Key.key, code: p2Key.code, keyCode: p2Key.keyCode };
-    targetCode = p2Key.code;
+  // 1. NẾU LÀ GUEST (PLAYER 2): Bắn thẳng tín hiệu qua WebRTC sang máy Host
+  if (typeof isHostPlayer !== "undefined" && !isHostPlayer) {
+    if (dataChannel && dataChannel.readyState === "open") {
+      dataChannel.send(JSON.stringify({
+        type: "P2_INPUT",
+        action: type,
+        code: keyCodeIdentifier
+      }));
+    }
+    return; // Dừng lại, không phát vào máy Guest
   }
 
+  // 2. NẾU LÀ HOST HOẶC CHƠI ĐƠN: Nạp phím vào EmulatorJS (Player 1)
+  const keyInfo = KEY_MAP_CONFIG[keyCodeIdentifier];
   if (!keyInfo) return;
 
   const event = new KeyboardEvent(type, {
-    key: keyInfo.key, code: targetCode,
-    keyCode: keyInfo.keyCode, which: keyInfo.keyCode,
-    bubbles: true, cancelable: true, composed: true
+    key: keyInfo.key,
+    code: keyInfo.code,
+    keyCode: keyInfo.keyCode,
+    which: keyInfo.keyCode,
+    bubbles: true,
+    cancelable: true,
+    composed: true
   });
 
   Object.defineProperty(event, "keyCode", { get: () => keyInfo.keyCode });
