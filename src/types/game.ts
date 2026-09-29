@@ -4,7 +4,6 @@ export type AssetSource =
   | { type: 'image'; src: string; alt?: string }
   | { type: 'lucide'; iconName: string };
 
-// Bổ sung MasterItem để tương thích ngược cho các file constants cũ
 export interface MasterItem {
   id: string;
   name: string;
@@ -98,6 +97,7 @@ export interface SaveBackupEntry {
   data: GameSaveData;
 }
 
+// Khách hàng đứng tại quầy nâng cấp (Phản ứng theo giá thực tế)
 export interface CounterCustomer {
   id: string;
   name: string;
@@ -107,6 +107,7 @@ export interface CounterCustomer {
   patienceTotalMs: number;
   patienceRemainingMs: number;
   tipBonusRatio: number;
+  priceReaction: 'cheap' | 'fair' | 'expensive'; // Tâm lý dựa trên giá người chơi đặt
 }
 
 export type PetSpecies = 'cat' | 'dog' | 'rabbit' | 'bear';
@@ -156,6 +157,7 @@ export interface FriendRequestItem {
   createdAt: string;
 }
 
+// Cấu trúc Save Data (Nâng cấp lên Version 8)
 export interface GameSaveData {
   bakeryId: string;
   playerName: string;

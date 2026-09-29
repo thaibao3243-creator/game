@@ -100,9 +100,6 @@ export default function App() {
     }, 1000);
 
     // 2. Khách vãng lai mua lẻ kệ tủ kính (4500ms)
-    const aiTimer = setInterval(() => {
-      tickCustomerAI();
-    }, 4500);
 
     // 3. Auto-sync Cloud mỗi 60 giây (nếu có user)
     const autoSaveTimer = setInterval(() => {
@@ -118,7 +115,6 @@ export default function App() {
 
     return () => {
       clearInterval(timer);
-      clearInterval(aiTimer);
       clearInterval(autoSaveTimer);
       clearInterval(backupTimer);
     };
